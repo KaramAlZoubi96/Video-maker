@@ -3,43 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Settings · Shorts Autoposter</title>
+<title>Settings · Shorts HQ</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/app.js"></script>
 </head>
 <body class="hidden">
-<header>
-  <a class="brand" href="/">▶ Shorts Autoposter</a>
-  <nav>
-    <a href="/">Queue</a>
-    <a href="/upload.html">Upload</a>
-    <a href="/settings.html">Settings</a>
-    <button class="link" type="button" onclick="logout()">Log out (<span data-username></span>)</button>
-  </nav>
-</header>
 <main>
-<h1>Settings</h1>
+<div class="head"><h1>Settings</h1></div>
 <div id="flash" class="flash hidden"></div>
 
-<h2>Accounts</h2>
-<div class="grid2">
-  <div class="card" id="yt"></div>
-  <div class="card" id="ig"></div>
-</div>
+<h2>Your 2 pages</h2>
+<p class="muted small" style="margin-top:-6px">Each page has its own YouTube channel, Instagram account and posting times.</p>
+<div class="grid2" id="pages"></div>
 
-<h2>Posting schedule</h2>
+<h2>General</h2>
 <div class="card">
-<form id="sched">
-  <label for="slots">Daily posting times (24h, comma separated)</label>
-  <input id="slots" type="text" placeholder="12:00, 19:00">
-  <div class="muted small">At each time, the top video in the queue is posted. It runs on Netlify, so your computer can be off.</div>
-  <label for="tz">Your timezone</label>
+<form id="general">
+  <label for="tz" style="margin-top:0">Your timezone (used for all posting times)</label>
   <select id="tz"></select>
+  <div id="tzhint" class="muted small"></div>
   <label for="privacy">YouTube visibility</label>
   <select id="privacy"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select>
   <div class="muted small">Until Google approves your API project (audit), YouTube keeps API uploads private. See docs/SETUP_YOUTUBE.md.</div>
-  <div class="check" style="margin-top:12px"><input type="checkbox" id="st"> <label for="st" style="margin:0;font-weight:500">Add #Shorts to YouTube automatically if missing</label></div>
-  <p><button type="submit">Save settings</button></p>
+  <div class="check" style="margin-top:12px"><input type="checkbox" id="st"> <label for="st">Add #Shorts to YouTube automatically if missing</label></div>
+  <p><button type="submit">Save</button></p>
 </form>
 </div>
 
@@ -64,61 +51,75 @@
     </form>
   </div>
 </div>
+
+<h2>For setup</h2>
+<div class="card small">
+  <div class="muted">Redirect URIs (the same for both pages):</div>
+  <div>Google Cloud: <code id="ruYt"></code></div>
+  <div id="ruIgRow" style="margin-top:6px">Meta (Instagram): <code id="ruIg"></code></div>
+</div>
 </main>
 <script>
 const $ = id => document.getElementById(id);
+let S = null;
+
 async function post(path, data) {
   const r = await api(path, { json: data });
   flash(r.ok ? r.data.message : (r.data.error || "Something went wrong."), !r.ok);
   return r.ok;
 }
 
-function accountCard(name, key, a, s) {
-  const connectBtn = (label, cls) => `<a class="btn ${cls}" href="/api/connect/${key}">${label}</a>`;
-  let h = `<b>${name}</b>`;
-  if (a) {
-    h += `<p>${a.status === "ok" ? `✓ Connected: <b>${esc(a.displayName)}</b>` : `<span class="err">⚠ ${esc(a.error)}</span>`}</p>`;
-    if (key === "instagram" && a.tokenExpiresAt) h += `<p class="muted small">Login renews automatically. Valid until ${fmtTime(a.tokenExpiresAt)}.</p>`;
-    h += `<div class="actions">`;
-    if (key === "youtube" ? s.youtubeConfigured : s.instagramOAuthConfigured) h += connectBtn("Reconnect", "ghost");
-    h += `<button class="danger" onclick="if(confirm('Disconnect ${name}?'))post('/api/disconnect/${key}',{}).then(load)">Disconnect</button></div>`;
-  } else {
-    h += `<p class="muted">Not connected.</p>`;
-    if (key === "youtube") h += s.youtubeConfigured ? connectBtn("Connect YouTube", "") :
-      `<p class="err small">Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Netlify → Site configuration → Environment variables, then redeploy. Guide: docs/SETUP_YOUTUBE.md</p>`;
-    else if (s.instagramOAuthConfigured) h += connectBtn("Connect Instagram", "");
-  }
-  if (key === "instagram") {
-    h += `<details ${!a && !s.instagramOAuthConfigured ? "open" : ""}><summary>Or paste an access token from the Meta developer dashboard</summary>
-      <form onsubmit="event.preventDefault();post('/api/connect/instagram/token',{token:this.tok.value}).then(load)">
-        <input name="tok" type="password" placeholder="IGAA…" required><p><button type="submit">Save token</button></p></form></details>`;
-    if (s.instagramOAuthConfigured) h += `<p class="muted small">Redirect URI to register in Meta:<br><code>${esc(s.redirectInstagram)}</code></p>`;
-  } else {
-    h += `<p class="muted small">Redirect URI to register in Google Cloud:<br><code>${esc(s.redirectYoutube)}</code></p>`;
-  }
-  return h;
+function accountRow(page, key, a) {
+  const name = key === "youtube" ? "YouTube" : "Instagram";
+  const canOAuth = key === "youtube" ? S.youtubeConfigured : S.instagramOAuthConfigured;
+  let status;
+  if (!a) status = `<span class="muted">Not connected</span>`;
+  else if (a.status === "ok") status = `✓ <b>${esc(a.displayName)}</b>`;
+  else status = `<span class="err">⚠ ${esc(a.error)}</span>`;
+  let actions = "";
+  if (canOAuth) actions += `<a class="btn ${a ? "ghost" : ""}" href="/api/connect/${page.id}/${key}">${a ? "Reconnect" : "Connect"}</a>`;
+  if (a) actions += `<button class="danger" onclick="if(confirm('Disconnect ${name} from ${esc(page.name)}?'))post('/api/disconnect/${page.id}/${key}',{}).then(load)">Disconnect</button>`;
+  let extra = "";
+  if (key === "youtube" && !S.youtubeConfigured) extra = `<div class="err small" style="width:100%">Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Netlify environment variables, then redeploy.</div>`;
+  if (key === "instagram") extra = `<details style="width:100%" ${!a && !canOAuth ? "open" : ""}><summary class="muted small">Paste an access token instead</summary>
+      <form onsubmit="event.preventDefault();post('/api/connect/${page.id}/instagram/token',{token:this.tok.value}).then(load)">
+        <input name="tok" type="password" placeholder="IGAA…" required style="margin-top:8px"><p><button type="submit">Save token</button></p></form></details>`;
+  return `<div class="acc"><div><div class="small muted">${name}</div>${status}</div><div class="actions">${actions}</div>${extra}</div>`;
+}
+
+function pageCard(p, i) {
+  return `<div class="card">
+    <div class="pagehead"><span class="badge">Page ${i + 1}</span></div>
+    <form onsubmit="event.preventDefault();post('/api/pages/${p.id}',{name:this.n.value,slots:this.s.value}).then(load)">
+      <label>Page name</label><input name="n" type="text" maxlength="40" required value="${esc(p.name)}">
+      <label>Daily posting times (24h, comma separated)</label><input name="s" type="text" placeholder="12:00, 19:00" value="${esc(p.slots.join(", "))}">
+      <p><button type="submit">Save page</button></p>
+    </form>
+    ${accountRow(p, "youtube", p.accounts.youtube)}
+    ${accountRow(p, "instagram", p.accounts.instagram)}
+  </div>`;
 }
 
 async function load() {
   const r = await api("/api/settings");
   if (!r.ok) return;
-  const s = r.data;
-  $("yt").innerHTML = accountCard("YouTube", "youtube", s.accounts.youtube, s);
-  $("ig").innerHTML = accountCard("Instagram", "instagram", s.accounts.instagram, s);
-  $("slots").value = s.slots.join(", ");
+  S = r.data;
+  $("pages").innerHTML = S.pages.map(pageCard).join("");
   const zones = (Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone") : []).concat(["UTC"]);
-  if (!zones.includes(s.timezone)) zones.push(s.timezone);
+  if (!zones.includes(S.timezone)) zones.push(S.timezone);
+  $("tz").innerHTML = [...new Set(zones)].sort().map(z => `<option ${z === S.timezone ? "selected" : ""}>${esc(z)}</option>`).join("");
   const guess = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  $("tz").innerHTML = [...new Set(zones)].sort().map(z => `<option ${z === s.timezone ? "selected" : ""}>${esc(z)}</option>`).join("");
-  if (s.timezone === "UTC" && guess && guess !== "UTC") $("tz").insertAdjacentHTML("afterend", `<div class="muted small" id="tzhint">Your device is in <b>${esc(guess)}</b>. <a href="#" onclick="event.preventDefault();$('tz').value='${esc(guess)}';this.parentNode.remove()">Use it</a></div>`);
-  $("privacy").value = s.youtubePrivacy;
-  $("st").checked = s.addShortsTag;
-  $("users").innerHTML = s.users.map(u => `<li>${esc(u.username)} <span class="muted small">since ${fmtTime(u.createdAt)}</span></li>`).join("");
+  $("tzhint").innerHTML = guess && guess !== S.timezone ? `Your device is in <b>${esc(guess)}</b>. <a href="#" onclick="event.preventDefault();$('tz').value='${esc(guess)}'">Use it</a> (then Save)` : "";
+  $("privacy").value = S.youtubePrivacy;
+  $("st").checked = S.addShortsTag;
+  $("users").innerHTML = S.users.map(u => `<li>${esc(u.username)} <span class="muted small">since ${fmtDate(u.createdAt)}</span></li>`).join("");
+  $("ruYt").textContent = S.redirectYoutube;
+  $("ruIg").textContent = S.redirectInstagram;
 }
 
-$("sched").addEventListener("submit", async e => {
+$("general").addEventListener("submit", async e => {
   e.preventDefault();
-  if (await post("/api/settings", { slots: $("slots").value, timezone: $("tz").value, youtubePrivacy: $("privacy").value, addShortsTag: $("st").checked })) load();
+  if (await post("/api/settings", { timezone: $("tz").value, youtubePrivacy: $("privacy").value, addShortsTag: $("st").checked })) load();
 });
 $("addUser").addEventListener("submit", async e => {
   e.preventDefault();

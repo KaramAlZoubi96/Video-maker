@@ -3,21 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shorts Autoposter</title>
+<title>Log in · Shorts HQ</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/app.js"></script>
 </head>
 <body>
 <main>
-<div class="auth card">
-  <h1 id="h">Log in</h1>
+<div class="auth">
+<a class="logo" href="/"><i>●</i> <span>SHORTS HQ</span></a>
+<div class="card">
+  <h1 id="h" style="font-size:22px">Log in</h1>
   <p id="setupText" class="muted hidden">Create the first account. You can add your friend's account later in Settings.</p>
   <div id="flash" class="flash hidden"></div>
   <form id="f">
     <label for="u">Username</label><input id="u" type="text" autocomplete="username" required autofocus>
     <label for="p">Password</label><input id="p" type="password" autocomplete="current-password" required>
-    <p><button id="go" type="submit">Log in</button></p>
+    <p><button id="go" class="big" type="submit" style="width:100%">Log in</button></p>
   </form>
+</div>
 </div>
 </main>
 <script>

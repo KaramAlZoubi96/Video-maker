@@ -3,25 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Upload · Shorts Autoposter</title>
+<title>Upload · Shorts HQ</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/app.js"></script>
 </head>
 <body class="hidden">
-<header>
-  <a class="brand" href="/">▶ Shorts Autoposter</a>
-  <nav>
-    <a href="/">Queue</a>
-    <a href="/upload.html">Upload</a>
-    <a href="/settings.html">Settings</a>
-    <button class="link" type="button" onclick="logout()">Log out (<span data-username></span>)</button>
-  </nav>
-</header>
 <main>
-<h1>Upload a video</h1>
+<div class="head"><h1>New video</h1></div>
 <div id="flash" class="flash hidden"></div>
 <div class="card">
 <form id="f">
+  <label style="margin-top:0">Which page is this video for?</label>
+  <div class="pick" id="pages"></div>
   <label for="file">Video file — MP4 or MOV, vertical, 3–180 seconds, up to 150 MB</label>
   <input id="file" type="file" accept="video/mp4,video/quicktime,.mp4,.mov,.m4v" required>
   <div id="info" class="muted small"></div>
@@ -32,9 +25,9 @@
   <textarea id="desc" maxlength="2000" placeholder="Write something… #funny"></textarea>
   <div class="muted small"><span id="dc">0</span>/2000 · Instagram caption = title + this text</div>
   <label>Post to</label>
-  <div class="check"><input type="checkbox" id="yt" checked> <label for="yt" style="margin:0;font-weight:500">YouTube Shorts</label></div>
-  <div class="check"><input type="checkbox" id="ig" checked> <label for="ig" style="margin:0;font-weight:500">Instagram Reels</label></div>
-  <p><button id="go" type="submit">Upload & add to queue</button></p>
+  <div class="check"><input type="checkbox" id="yt" checked> <label for="yt">YouTube Shorts <span class="muted small" id="ytName"></span></label></div>
+  <div class="check"><input type="checkbox" id="ig" checked> <label for="ig">Instagram Reels <span class="muted small" id="igName"></span></label></div>
+  <p><button id="go" class="big" type="submit">Upload & add to queue</button></p>
   <div class="progress" id="pb"><div></div></div>
   <div id="msg" class="small"></div>
   <p class="muted small">Keep this page open until the upload finishes.</p>
@@ -116,7 +109,9 @@ $("f").addEventListener("submit", async e => {
   const setMsg = t => $("msg").textContent = t;
   try {
     setMsg("Starting…");
-    const c = await api("/api/videos", { json: { title: $("title").value, description: $("desc").value, platforms,
+    const pageId = (document.querySelector("input[name=page]:checked") || {}).value;
+    if (!pageId) throw new Error("Choose which page this video is for.");
+    const c = await api("/api/videos", { json: { pageId, title: $("title").value, description: $("desc").value, platforms,
       fileName: file.name, size: file.size, width: meta.width, height: meta.height, duration: meta.duration, thumbnail: meta.thumbnail } });
     if (!c.ok) throw new Error(c.data.error || "Could not start the upload.");
     const { id, chunkSize, chunkCount } = c.data;
@@ -133,7 +128,10 @@ $("f").addEventListener("submit", async e => {
     await Promise.all([worker(), worker(), worker()]);
     for (let i = 0; i < 3; i++) {
       const f = await api(`/api/videos/${id}/complete`, { json: {} });
-      if (f.ok) { setMsg("Done! Going to the queue…"); location.href = "/?msg=" + encodeURIComponent("Video added to the queue."); return; }
+      if (f.ok) {
+        try { localStorage.setItem("page", pageId); } catch (_) {}
+        setMsg("Done! Going to the queue…"); location.href = "/?msg=" + encodeURIComponent("Video added to the queue."); return;
+      }
       if (f.status !== 409) throw new Error(f.data.error || "Could not finish the upload.");
       for (const n of f.data.missing || []) await sendChunk(id, file, n, chunkSize);
     }
@@ -143,7 +141,28 @@ $("f").addEventListener("submit", async e => {
   }
 });
 
-requireUser();
+// Page picker: each page shows its connected accounts.
+let PAGES = [];
+function showAccounts() {
+  const id = (document.querySelector("input[name=page]:checked") || {}).value;
+  const p = PAGES.find(x => x.id === id);
+  if (!p) return;
+  $("ytName").innerHTML = p.accounts.youtube ? "→ " + esc(p.accounts.youtube) : '<span class="err">(not connected yet)</span>';
+  $("igName").innerHTML = p.accounts.instagram ? "→ " + esc(p.accounts.instagram) : '<span class="err">(not connected yet)</span>';
+}
+(async () => {
+  if (!(await requireUser())) return;
+  const r = await api("/api/dashboard");
+  if (!r.ok) return;
+  PAGES = r.data.pages;
+  let want = new URLSearchParams(location.search).get("page");
+  if (!want) { try { want = localStorage.getItem("page"); } catch (_) {} }
+  if (!PAGES.find(p => p.id === want)) want = PAGES[0].id;
+  $("pages").innerHTML = PAGES.map(p => `<input type="radio" name="page" id="pg-${p.id}" value="${p.id}" ${p.id === want ? "checked" : ""}>
+    <label for="pg-${p.id}"><b>${esc(p.name)}</b><span class="muted small">${esc([p.accounts.youtube, p.accounts.instagram].filter(Boolean).join(" · ") || "No accounts connected yet")}</span></label>`).join("");
+  document.querySelectorAll("input[name=page]").forEach(i => i.addEventListener("change", showAccounts));
+  showAccounts();
+})();
 </script>
 </body>
 </html>

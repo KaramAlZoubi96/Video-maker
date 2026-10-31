@@ -3,77 +3,99 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Queue · Shorts Autoposter</title>
+<title>Queue · Shorts HQ</title>
 <link rel="stylesheet" href="/style.css">
 <script src="/app.js"></script>
 </head>
 <body class="hidden">
-<header>
-  <a class="brand" href="/">▶ Shorts Autoposter</a>
-  <nav>
-    <a href="/">Queue</a>
-    <a href="/upload.html">Upload</a>
-    <a href="/settings.html">Settings</a>
-    <button class="link" type="button" onclick="logout()">Log out (<span data-username></span>)</button>
-  </nav>
-</header>
 <main>
   <div id="flash" class="flash hidden"></div>
   <div id="problems"></div>
-  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
-    <h1 style="margin:0">Queue</h1>
-    <a class="btn" href="/upload.html">+ Upload video</a>
+  <div class="head">
+    <h1>Your queue</h1>
+    <a class="btn big" id="newBtn" href="/upload.html">+ New video</a>
   </div>
-  <p class="muted" id="nextSlot"></p>
-  <div id="activeWrap" class="hidden"><h2>Posting now / needs attention</h2><div id="active"></div></div>
-  <h2>Waiting in queue (<span id="qcount">0</span>)</h2>
-  <div id="queued"></div>
-  <div id="doneWrap" class="hidden"><h2>Published</h2><div id="done"></div></div>
+  <div class="ptabs" id="tabs"></div>
+  <div id="page"></div>
 </main>
 <script>
-let TZ = "UTC";
+let DATA = null, TZ = "UTC";
+let current = (() => { try { return localStorage.getItem("page") || "p1"; } catch (_) { return "p1"; } })();
 const NAMES = { youtube: "YouTube", instagram: "Instagram" };
+const SHORT = { youtube: "YT", instagram: "IG" };
 
-function badges(v) {
-  let h = '<div class="badges">';
-  if (v.status === "uploading") h += '<span class="badge processing">⏳ Upload not finished</span>';
-  for (const [pl, p] of Object.entries(v.posts)) {
-    const n = NAMES[pl];
-    if (p.status === "published") h += `<span class="badge published">✓ ${n}${p.url ? ` · <a href="${esc(p.url)}" target="_blank" rel="noopener">open</a>` : ""}</span>`;
-    else if (p.status === "uploading") h += `<span class="badge uploading">↑ ${esc(p.note || n + " uploading…")}</span>`;
-    else if (p.status === "failed") h += `<span class="badge failed">✕ ${n} failed</span>`;
-    else h += `<span class="badge">${n} · ${esc(p.note || (v.releasedAt ? "waiting" : "queued"))}${p.nextAttemptAt && v.releasedAt ? " (next try " + fmtTime(p.nextAttemptAt, TZ) + ")" : ""}</span>`;
-  }
-  h += "</div>";
-  for (const [pl, p] of Object.entries(v.posts)) {
-    if (p.status === "failed") h += `<div class="actions"><span class="err">${NAMES[pl]}: ${esc(p.lastError)}</span><button class="ghost" onclick="act('${v.id}','retry/${pl}')">Retry</button></div>`;
-    else if (p.lastError && p.status === "pending") h += `<div class="muted small">Last problem: ${esc(p.lastError)}</div>`;
-  }
-  return h;
+function postDots(v) {
+  return Object.entries(v.posts).map(([pl, p]) => {
+    if (p.status === "published") return p.url ? `<a class="d ok" href="${esc(p.url)}" target="_blank" rel="noopener">${SHORT[pl]} ✓</a>` : `<span class="d ok">${SHORT[pl]} ✓</span>`;
+    if (p.status === "uploading") return `<span class="d up">${SHORT[pl]} ↑</span>`;
+    if (p.status === "failed") return `<span class="d bad">${SHORT[pl]} ✕</span>`;
+    return `<span class="d">${SHORT[pl]}</span>`;
+  }).join("");
 }
 
-function card(v, opts = {}) {
-  const queued = opts.queued;
-  return `<div class="card video">
-    <img class="thumb" src="/api/thumb/${v.id}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'thumb'}))">
-    <div class="body">
-      <div class="title">${esc(v.title)}</div>
-      <div class="muted small">by ${esc(v.uploader)} · ${Math.round(v.duration)}s · added ${fmtTime(v.createdAt, TZ)}${v.releasedAt ? " · posting started " + fmtTime(v.releasedAt, TZ) : ""}</div>
-      ${badges(v)}
-      <div class="actions">
-        ${queued && v.status === "ready" ? `<button onclick="if(confirm('Post this video now?'))act('${v.id}','post-now')">Post now</button>` : ""}
-        ${queued ? `<button class="ghost" title="Move up" ${opts.first ? "disabled" : ""} onclick="act('${v.id}','move',{direction:-1})">↑</button>
-                    <button class="ghost" title="Move down" ${opts.last ? "disabled" : ""} onclick="act('${v.id}','move',{direction:1})">↓</button>` : ""}
-        <button class="danger" onclick="if(confirm('Remove this video from the website? (Already-published posts stay online.)'))act('${v.id}','delete')">Delete</button>
-      </div>
-      ${queued ? `<details><summary>Edit text</summary>
-        <form onsubmit="event.preventDefault();act('${v.id}','edit',{title:this.t.value,description:this.d.value})">
-          <label>Title</label><input name="t" type="text" maxlength="100" required value="${esc(v.title)}">
-          <label>Description / caption</label><textarea name="d" maxlength="2000">${esc(v.description)}</textarea>
-          <p><button type="submit">Save</button></p>
-        </form></details>` : ""}
-    </div></div>`;
+function notes(v) {
+  let h = "";
+  for (const [pl, p] of Object.entries(v.posts)) {
+    if (p.status === "failed") h += `<div class="err">${NAMES[pl]}: ${esc(p.lastError)} <button class="ghost" style="padding:4px 10px;margin-top:4px" onclick="act('${v.id}','retry/${pl}')">Retry</button></div>`;
+    else if (v.releasedAt && p.status !== "published" && (p.note || p.lastError)) h += `<div class="muted">${NAMES[pl]}: ${esc(p.note || "")}${p.nextAttemptAt ? " · next try " + fmtTime(p.nextAttemptAt, TZ) : ""}</div>`;
+  }
+  if (v.status === "uploading") h += `<div class="muted">Upload not finished. Upload it again if this stays.</div>`;
+  return h ? `<div class="notes">${h}</div>` : "";
 }
+
+function tile(v, kind, i, total) {
+  const label = kind === "queued" ? `<span class="num">#${i + 1}</span>` : kind === "active" ? `<span class="num live">LIVE</span>` : "";
+  const meta = kind === "done" ? fmtDate(v.releasedAt, TZ) : `by ${esc(v.uploader)} · ${Math.round(v.duration)}s`;
+  let acts = "";
+  if (kind === "queued") {
+    acts = `${v.status === "ready" ? `<button onclick="if(confirm('Post this video now?'))act('${v.id}','post-now')">Post now</button>` : ""}
+      <span class="grow"></span>
+      <button class="icon" title="Move earlier" ${i === 0 ? "disabled" : ""} onclick="act('${v.id}','move',{direction:-1})">↑</button>
+      <button class="icon" title="Move later" ${i === total - 1 ? "disabled" : ""} onclick="act('${v.id}','move',{direction:1})">↓</button>`;
+  }
+  const del = `<button class="icon" title="Delete" onclick="if(confirm('Remove this video from the website? (Already-published posts stay online.)'))act('${v.id}','delete')">🗑</button>`;
+  const edit = kind === "queued" ? `<details><summary>Edit text</summary>
+      <form onsubmit="event.preventDefault();act('${v.id}','edit',{title:this.t.value,description:this.d.value})">
+        <label>Title</label><input name="t" type="text" maxlength="100" required value="${esc(v.title)}">
+        <label>Caption</label><textarea name="d" maxlength="2000">${esc(v.description)}</textarea>
+        <p><button type="submit">Save</button></p>
+      </form></details>` : "";
+  return `<div class="tile">
+    <div class="pic">${label}<img src="/api/thumb/${v.id}" alt="" loading="lazy" onerror="this.remove()">
+      <div class="ov"><div class="t">${esc(v.title)}</div><div class="m">${meta}</div><div class="dots">${postDots(v)}</div></div></div>
+    ${notes(v)}
+    <div class="acts">${acts || '<span class="grow"></span>'}${del}</div>
+    ${edit}
+  </div>`;
+}
+
+function section(title, list, kind, emptyText) {
+  if (!list.length && !emptyText) return "";
+  return `<h2>${title}</h2>` + (list.length
+    ? `<div class="grid">${list.map((v, i) => tile(v, kind, i, list.length)).join("")}</div>`
+    : `<div class="empty">${emptyText}</div>`);
+}
+
+function render() {
+  const d = DATA;
+  if (!d.pages.find(p => p.id === current)) current = d.pages[0].id;
+  document.getElementById("problems").innerHTML = d.problems.map(p => `<div class="banner">⚠ ${esc(p)} <a href="/settings.html">Fix in Settings</a></div>`).join("");
+  document.getElementById("tabs").innerHTML = d.pages.map(p =>
+    `<button class="${p.id === current ? "on" : ""}" onclick="pick('${p.id}')">${esc(p.name)} <span class="count">${p.queued.length}</span></button>`).join("");
+  const p = d.pages.find(x => x.id === current);
+  document.getElementById("newBtn").href = "/upload.html?page=" + p.id;
+  const acc = [p.accounts.youtube && "YouTube " + p.accounts.youtube, p.accounts.instagram && "Instagram " + p.accounts.instagram].filter(Boolean).join(" · ");
+  const next = p.nextSlot
+    ? `<div class="next"><div class="clock">⏰</div><div><b>Next drop: ${fmtTime(p.nextSlot, TZ)}</b><small>${p.queued[0] ? `"${esc(p.queued[0].title)}" goes out` : "Nothing waiting. Upload a video for this page."}${acc ? " · " + esc(acc) : ""}</small></div></div>`
+    : `<div class="next"><div class="clock">⏸</div><div><b>No posting times for ${esc(p.name)}</b><small>Videos only post when you press "Post now". <a href="/settings.html">Set times</a></small></div></div>`;
+  document.getElementById("page").innerHTML = next
+    + section("Posting now", p.active, "active")
+    + section(`Up next (${p.queued.length})`, p.queued, "queued", `No videos waiting for ${esc(p.name)}. <a href="/upload.html?page=${p.id}">Upload one</a>`)
+    + section(`Posted (${p.publishedCount})`, p.done, "done");
+  window.__busy = d.pages.some(x => x.active.length);
+}
+
+function pick(id) { current = id; try { localStorage.setItem("page", id); } catch (_) {} render(); }
 
 async function act(id, action, data = {}) {
   const r = await api(`/api/videos/${id}/${action}`, { json: data });
@@ -85,28 +107,14 @@ async function act(id, action, data = {}) {
 async function load() {
   const r = await api("/api/dashboard");
   if (!r.ok) return;
-  const d = r.data;
-  TZ = d.timezone;
-  document.getElementById("problems").innerHTML = d.problems.map(p => `<div class="banner">⚠ ${esc(p)} <a href="/settings.html">Fix in Settings</a></div>`).join("");
-  document.getElementById("nextSlot").innerHTML = d.nextSlot
-    ? `Next automatic post: <b>${fmtTime(d.nextSlot, TZ)}</b> — the top video in the queue goes out.`
-    : `No posting times set. Videos only post when you click “Post now”. <a href="/settings.html">Set times</a>`;
-  document.getElementById("qcount").textContent = d.queued.length;
-  document.getElementById("queued").innerHTML = d.queued.length
-    ? d.queued.map((v, i) => card(v, { queued: true, first: i === 0, last: i === d.queued.length - 1 })).join("")
-    : '<div class="card muted">The queue is empty. <a href="/upload.html">Upload a video</a>.</div>';
-  document.getElementById("activeWrap").classList.toggle("hidden", !d.active.length);
-  document.getElementById("active").innerHTML = d.active.map(v => card(v)).join("");
-  document.getElementById("doneWrap").classList.toggle("hidden", !d.done.length);
-  document.getElementById("done").innerHTML = d.done.map(v => card(v)).join("");
-  window.__busy = d.active.length > 0;
+  DATA = r.data; TZ = r.data.timezone;
+  render();
 }
 
 (async () => {
   if (!(await requireUser())) return;
   showUrlMessages();
   await load();
-  // Refresh while something is posting (but not while you're editing text).
   setInterval(() => { if (window.__busy && !document.querySelector("details[open]")) load(); }, 10000);
 })();
 </script>

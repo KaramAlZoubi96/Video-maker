@@ -18,21 +18,47 @@ function flash(msg, isError) {
   if (!el || !msg) return;
   el.className = "flash" + (isError ? " error" : "");
   el.textContent = msg;
-  el.classList.remove("hidden");
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 function fmtTime(iso, tz) {
   if (!iso) return "";
+  try { return new Date(iso).toLocaleString(undefined, { timeZone: tz || undefined, weekday: "short", hour: "2-digit", minute: "2-digit" }); }
+  catch (_) { return new Date(iso).toLocaleString(); }
+}
+function fmtDate(iso, tz) {
+  if (!iso) return "";
   try { return new Date(iso).toLocaleString(undefined, { timeZone: tz || undefined, month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
   catch (_) { return new Date(iso).toLocaleString(); }
+}
+
+const NAV = [
+  ["/", "🎬", "Queue"],
+  ["/upload.html", "⬆", "Upload"],
+  ["/settings.html", "⚙", "Settings"],
+];
+
+/** Draws the sidebar (computer) and top bar + bottom tabs (phone) around <main>. */
+function shell(user) {
+  const here = location.pathname === "/index.html" ? "/" : location.pathname;
+  const links = NAV.map(([href, icon, label]) => `<a href="${href}" class="${href === here ? "on" : ""}"><b>${icon}</b> ${label}</a>`).join("");
+  const logo = `<a class="logo" href="/"><i>●</i> <span>SHORTS HQ</span></a>`;
+  const main = document.querySelector("main");
+  const app = document.createElement("div");
+  app.className = "app";
+  app.innerHTML = `<aside class="side">${logo}<nav class="nav">${links}</nav>
+    <div class="who"><b>${esc(user)}</b>logged in<br><button class="link" onclick="logout()">Log out</button></div></aside>`;
+  main.parentNode.insertBefore(app, main);
+  app.appendChild(main);
+  document.body.insertAdjacentHTML("afterbegin", `<div class="topbar">${logo}<button class="link" onclick="logout()">Log out</button></div>`);
+  document.body.insertAdjacentHTML("beforeend", `<nav class="tabbar">${links}</nav>`);
 }
 
 async function requireUser() {
   const r = await api("/api/me");
   if (r.data.needsSetup) { location.href = "/login.html?setup=1"; return null; }
   if (!r.data.user) { location.href = "/login.html"; return null; }
-  document.querySelectorAll("[data-username]").forEach(e => e.textContent = r.data.user);
+  shell(r.data.user);
   document.body.classList.remove("hidden");
   return r.data.user;
 }
