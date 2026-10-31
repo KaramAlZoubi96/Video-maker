@@ -1,0 +1,220 @@
+import { describe, expect, it } from "vitest";
+import * as q from "../netlify/lib/queue.mts";
+import { kv } from "../netlify/lib/store.mts";
+import { zonedToDate } from "../netlify/lib/time.mts";
+import * as tokens from "../netlify/lib/tokens.mts";
+import {
+  AuthError, DeferError, PermanentError, type StepResult, TransientError, type Video,
+} from "../netlify/lib/types.mts";
+import { addVideo, freshStore } from "./helpers.ts";
+
+freshStore();
+
+async function connectAll() {
+  await tokens.saveAccount("youtube", { accessToken: "a", refreshToken: "r", status: "ok" });
+  await tokens.saveAccount("instagram", { accessToken: "a", remoteUserId: "17", status: "ok" });
+}
+
+type Outcome = StepResult | Error;
+function fakeUploaders(outcomes: Record<string, Outcome[]>) {
+  const calls: { platform: string; title: string; description: string; resume: any }[] = [];
+  const run = (platform: string) => async (ctx: any, onStart?: () => Promise<void>) => {
+    calls.push({ platform, title: ctx.title, description: ctx.description, resume: ctx.resume });
+    if (onStart && !ctx.resume.session) await onStart();
+    const o = outcomes[platform].shift()!;
+    if (o instanceof Error) throw o;
+    return o;
+  };
+  return {
+    calls,
+    ups: { youtube: () => ({ step: run("youtube") }), instagram: async () => ({ step: run("instagram") }) } as q.Uploaders,
+  };
+}
+const ok = (id: string): StepResult => ({ done: true, remoteId: id, url: `https://x/${id}` });
+const run = (ups: q.Uploaders) => q.runDuePosts(Date.now() + 20000, ups, fetch);
+const posts = async (id: string) => (await q.getVideo(id))!.posts;
+
+describe("slots", () => {
+  it("releases one video per slot and catches up only once", async () => {
+    await connectAll();
+    await q.updateSettings((s) => { s.timezone = "UTC"; s.slots = ["12:00", "19:00"]; });
+    const v1 = await addVideo({ position: 1 });
+    const v2 = await addVideo({ position: 2 });
+    const t = (d: number, h: number, m = 0) => zonedToDate(2026, 5, d, h, m, "UTC");
+    expect(await q.checkSlots(t(1, 11))).toBeNull(); // first run just records the time
+    expect(await q.checkSlots(t(1, 11, 30))).toBeNull();
+    expect(await q.checkSlots(t(1, 20))).toBe(v1.id); // 12:00 and 19:00 missed → only one
+    expect(await q.checkSlots(t(1, 20, 1))).toBeNull();
+    expect(await q.checkSlots(t(2, 12))).toBe(v2.id);
+  });
+
+  it("skips videos still uploading", async () => {
+    await connectAll();
+    await addVideo({ position: 1, status: "uploading" });
+    const v2 = await addVideo({ position: 2 });
+    expect(await q.releaseNextVideo()).toBe(v2.id);
+  });
+
+  it("holds a video when an account it needs is disconnected", async () => {
+    await connectAll();
+    const v = await addVideo();
+    await tokens.markAccountError("instagram", "expired");
+    expect(await q.releaseNextVideo()).toBeNull();
+    expect(await q.missingPlatforms(v)).toEqual(["instagram"]);
+    await tokens.saveAccount("instagram", { status: "ok", error: null });
+    expect(await q.releaseNextVideo()).toBe(v.id);
+  });
+});
+
+describe("posting", () => {
+  it("posts to both platforms with the right text", async () => {
+    const v = await addVideo();
+    await q.releaseVideo(v.id);
+    const { ups, calls } = fakeUploaders({ youtube: [ok("y1")], instagram: [ok("i1")] });
+    expect(await run(ups)).toBe(2);
+    const p = await posts(v.id);
+    expect(p.youtube!.status).toBe("published");
+    expect(p.youtube!.url).toBe("https://x/y1");
+    expect(p.instagram!.status).toBe("published");
+    const ytCall = calls.find((c) => c.platform === "youtube")!;
+    const igCall = calls.find((c) => c.platform === "instagram")!;
+    expect(ytCall.description).toContain("#Shorts");
+    expect(igCall.description.startsWith("T\n\nD")).toBe(true);
+    expect(igCall.description).not.toContain("#Shorts");
+  });
+
+  it("does not post videos that are not released", async () => {
+    await addVideo();
+    const { ups } = fakeUploaders({ youtube: [], instagram: [] });
+    expect(await run(ups)).toBe(0);
+  });
+
+  it("progress across runs keeps the post uploading without counting a failure", async () => {
+    const v = await addVideo({ platforms: ["youtube"] });
+    await q.releaseVideo(v.id);
+    const { ups } = fakeUploaders({ youtube: [{ done: false, note: "Uploading 40%" }, ok("y")] });
+    await run(ups);
+    let p = (await posts(v.id)).youtube!;
+    expect([p.status, p.note, p.attempts]).toEqual(["uploading", "Uploading 40%", 0]);
+    await run(ups);
+    p = (await posts(v.id)).youtube!;
+    expect(p.status).toBe("published");
+  });
+
+  it("an Instagram failure never re-uploads YouTube", async () => {
+    const v = await addVideo();
+    await q.releaseVideo(v.id);
+    const { ups, calls } = fakeUploaders({ youtube: [ok("y1")], instagram: [new TransientError("net"), ok("i1")] });
+    await run(ups);
+    let p = await posts(v.id);
+    expect(p.youtube!.status).toBe("published");
+    expect(p.instagram!.status).toBe("pending");
+    expect(p.instagram!.nextAttemptAt).toBeTruthy();
+    await q.updatePost(v.id, "instagram", { nextAttemptAt: new Date(Date.now() - 1000).toISOString() });
+    await run(ups);
+    expect(calls.map((c) => c.platform).sort()).toEqual(["instagram", "instagram", "youtube"]);
+    expect((await posts(v.id)).instagram!.status).toBe("published");
+  });
+
+  it("gives up after the maximum tries", async () => {
+    const v = await addVideo({ platforms: ["youtube"] });
+    await q.releaseVideo(v.id);
+    const { ups, calls } = fakeUploaders({ youtube: Array(10).fill(new TransientError("x")) });
+    for (let i = 0; i < 10; i++) {
+      await q.updatePost(v.id, "youtube", { nextAttemptAt: null });
+      await run(ups);
+    }
+    const p = (await posts(v.id)).youtube!;
+    expect(p.status).toBe("failed");
+    expect(p.lastError).toMatch(/Gave up after 4 tries/);
+    expect(calls.length).toBe(4);
+  });
+
+  it("permanent and login errors fail with the reason", async () => {
+    await connectAll();
+    const v = await addVideo();
+    await q.releaseVideo(v.id);
+    const { ups } = fakeUploaders({ youtube: [new PermanentError("rejected")], instagram: [new AuthError("expired")] });
+    await run(ups);
+    const p = await posts(v.id);
+    expect([p.youtube!.status, p.youtube!.lastError]).toEqual(["failed", "rejected"]);
+    expect(p.instagram!.status).toBe("failed");
+    expect((await tokens.getAccount("instagram"))!.status).toBe("error");
+  });
+
+  it("limits make posts wait without counting a try", async () => {
+    const v = await addVideo({ platforms: ["youtube"] });
+    await q.releaseVideo(v.id);
+    const until = new Date(Date.now() + 5 * 3600_000);
+    const { ups } = fakeUploaders({ youtube: [new DeferError("quota", until)] });
+    await run(ups);
+    const p = (await posts(v.id)).youtube!;
+    expect([p.status, p.attempts, p.nextAttemptAt]).toEqual(["pending", 0, until.toISOString()]);
+    expect(await run(ups)).toBe(0); // not due yet
+  });
+
+  it("respects the YouTube daily upload limit", async () => {
+    process.env.YOUTUBE_DAILY_UPLOAD_LIMIT = "1";
+    try {
+      const v1 = await addVideo({ platforms: ["youtube"] });
+      const v2 = await addVideo({ platforms: ["youtube"] });
+      await q.releaseVideo(v1.id);
+      await q.releaseVideo(v2.id);
+      const { ups, calls } = fakeUploaders({ youtube: [ok("a"), ok("b")] });
+      await run(ups);
+      const statuses = [(await posts(v1.id)).youtube!.status, (await posts(v2.id)).youtube!.status].sort();
+      expect(statuses).toEqual(["pending", "published"]);
+      expect(calls.length).toBe(2); // second one stopped before starting an upload
+    } finally {
+      delete process.env.YOUTUBE_DAILY_UPLOAD_LIMIT;
+    }
+  });
+
+  it("unexpected bugs never leave a post stuck", async () => {
+    const v = await addVideo({ platforms: ["youtube"] });
+    await q.releaseVideo(v.id);
+    const { ups } = fakeUploaders({ youtube: [new RangeError("bug")] });
+    await run(ups);
+    expect((await posts(v.id)).youtube!.status).toBe("pending");
+  });
+
+  it("missing file fails clearly", async () => {
+    const v = await addVideo({ platforms: ["youtube"] });
+    await q.updateVideo(v.id, (x) => { x.filesDeleted = true; return true; });
+    await q.releaseVideo(v.id);
+    const { ups } = fakeUploaders({ youtube: [] });
+    await run(ups);
+    expect((await posts(v.id)).youtube!.lastError).toMatch(/removed from storage/);
+  });
+});
+
+describe("storage", () => {
+  it("reads byte ranges across chunks", async () => {
+    const bytes = new Uint8Array(25).map((_, i) => i);
+    const v = await addVideo({ bytes, chunkSize: 10 } as any);
+    expect([...(await q.readRange(v, 8, 5))]).toEqual([8, 9, 10, 11, 12]);
+    expect([...(await q.readRange(v, 20, 5))]).toEqual([20, 21, 22, 23, 24]);
+  });
+
+  it("lock stops two scheduler runs at once", async () => {
+    let inner: unknown = "not run";
+    const outer = await q.withLock("t", 60000, async () => {
+      inner = await q.withLock("t", 60000, async () => "second");
+      return "first";
+    });
+    expect(outer).toBe("first");
+    expect(inner).toBeNull();
+    expect(await q.withLock("t", 60000, async () => "again")).toBe("again"); // released
+  });
+
+  it("maintenance deletes files a week after posting and drops abandoned uploads", async () => {
+    const old = new Date(Date.now() - 8 * 86400_000).toISOString();
+    const v = await addVideo({ platforms: ["youtube"] });
+    await q.updatePost(v.id, "youtube", { status: "published", publishedAt: old });
+    const abandoned = await addVideo({ status: "uploading", createdAt: old } as Partial<Video>);
+    await q.maintenance(Date.now(), fetch);
+    expect((await q.getVideo(v.id))!.filesDeleted).toBe(true);
+    expect(await kv().list(`chunks/${v.id}/`)).toEqual([]);
+    expect(await q.getVideo(abandoned.id)).toBeNull();
+  });
+});
