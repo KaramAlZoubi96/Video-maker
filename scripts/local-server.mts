@@ -22,14 +22,22 @@ if (process.env.MOCK_PLATFORMS) {
   const realFetch = globalThis.fetch;
   const received: Record<string, number> = {};
   let igPolls = 0;
+  let channelCalls = 0;
   globalThis.fetch = (async (input: any, init?: any) => {
     const req = new Request(input, init);
     const u = new URL(req.url);
     const h = u.host;
     if (h === "oauth2.googleapis.com") return Response.json({ access_token: "ya29.mock", refresh_token: "1//mock", expires_in: 3600 });
-    if (h === "www.googleapis.com" && u.pathname.endsWith("/channels")) return Response.json({ items: [{ id: "UCmock", snippet: { title: "Mock Channel" } }] });
-    if (h === "www.googleapis.com" && req.method === "POST") return new Response(null, { headers: { Location: "https://upload.mock/session/1" } });
+    if (h === "www.googleapis.com" && u.pathname.endsWith("/channels")) {
+      const n = ++channelCalls; // a different fake channel each time you connect
+      return Response.json({ items: [{ id: `UCmock${n}`, snippet: { title: `Mock Channel ${n}` } }] });
+    }
+    if (h === "www.googleapis.com" && req.method === "POST") {
+      received.yt = 0;
+      return new Response(null, { headers: { Location: "https://upload.mock/session/1" } });
+    }
     if (h === "upload.mock") {
+      if (!req.headers.get("Content-Range")) return new Response(null, { status: 400 });
       const cr = req.headers.get("Content-Range")!;
       const total = Number(cr.split("/")[1]);
       if (cr.startsWith("bytes */")) return new Response(null, { status: 308, headers: received.yt ? { Range: `bytes=0-${received.yt - 1}` } : {} });
@@ -41,10 +49,13 @@ if (process.env.MOCK_PLATFORMS) {
     if (h === "graph.instagram.com") {
       if (u.pathname.endsWith("content_publishing_limit")) return Response.json({ data: [{ quota_usage: 0, config: { quota_total: 50 } }] });
       if (u.pathname.endsWith("/media") && req.method === "POST") return Response.json({ id: "C1" });
-      if (u.pathname.endsWith("/C1")) return Response.json({ status_code: ++igPolls > 1 ? "FINISHED" : "IN_PROGRESS" });
+      if (u.pathname.endsWith("/C1")) return Response.json({ status_code: ++igPolls % 2 === 0 ? "FINISHED" : "IN_PROGRESS" });
       if (u.pathname.endsWith("media_publish")) return Response.json({ id: "M1" });
       if (u.pathname.endsWith("/M1")) return Response.json({ permalink: "https://instagram.com/reel/mock" });
-      if (u.pathname.endsWith("/me")) return Response.json({ user_id: "17", username: "mock_creator", account_type: "BUSINESS" });
+      if (u.pathname.endsWith("/me")) {
+        const tok = u.searchParams.get("access_token") ?? "x";
+        return Response.json({ user_id: `17${tok}`, username: `mock_${tok.toLowerCase()}`, account_type: "BUSINESS" });
+      }
       if (u.pathname.endsWith("refresh_access_token")) return Response.json({ access_token: "IGmock2", expires_in: 5184000 });
     }
     return realFetch(input, init);
