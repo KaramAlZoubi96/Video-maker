@@ -11,15 +11,17 @@ import { addVideo, freshStore } from "./helpers.ts";
 freshStore();
 
 async function connectAll() {
-  await tokens.saveAccount("youtube", { accessToken: "a", refreshToken: "r", status: "ok" });
-  await tokens.saveAccount("instagram", { accessToken: "a", remoteUserId: "17", status: "ok" });
+  for (const page of ["p1", "p2"] as const) {
+    await tokens.saveAccount(page, "youtube", { accessToken: "a", refreshToken: "r", status: "ok", remoteUserId: `UC-${page}` });
+    await tokens.saveAccount(page, "instagram", { accessToken: `ig-${page}`, remoteUserId: `17-${page}`, status: "ok" });
+  }
 }
 
 type Outcome = StepResult | Error;
 function fakeUploaders(outcomes: Record<string, Outcome[]>) {
-  const calls: { platform: string; title: string; description: string; resume: any }[] = [];
-  const run = (platform: string) => async (ctx: any, onStart?: () => Promise<void>) => {
-    calls.push({ platform, title: ctx.title, description: ctx.description, resume: ctx.resume });
+  const calls: { platform: string; page: string; title: string; description: string; resume: any }[] = [];
+  const run = (platform: string, page: string) => async (ctx: any, onStart?: () => Promise<void>) => {
+    calls.push({ platform, page, title: ctx.title, description: ctx.description, resume: ctx.resume });
     if (onStart && !ctx.resume.session) await onStart();
     const o = outcomes[platform].shift()!;
     if (o instanceof Error) throw o;
@@ -27,7 +29,7 @@ function fakeUploaders(outcomes: Record<string, Outcome[]>) {
   };
   return {
     calls,
-    ups: { youtube: () => ({ step: run("youtube") }), instagram: async () => ({ step: run("instagram") }) } as q.Uploaders,
+    ups: { youtube: (pg: string) => ({ step: run("youtube", pg) }), instagram: async (pg: string) => ({ step: run("instagram", pg) }) } as q.Uploaders,
   };
 }
 const ok = (id: string): StepResult => ({ done: true, remoteId: id, url: `https://x/${id}` });
@@ -37,32 +39,83 @@ const posts = async (id: string) => (await q.getVideo(id))!.posts;
 describe("slots", () => {
   it("releases one video per slot and catches up only once", async () => {
     await connectAll();
-    await q.updateSettings((s) => { s.timezone = "UTC"; s.slots = ["12:00", "19:00"]; });
+    await q.updateSettings((s) => { s.timezone = "UTC"; s.pages.p1.slots = ["12:00", "19:00"]; s.pages.p2.slots = []; });
     const v1 = await addVideo({ position: 1 });
     const v2 = await addVideo({ position: 2 });
     const t = (d: number, h: number, m = 0) => zonedToDate(2026, 5, d, h, m, "UTC");
-    expect(await q.checkSlots(t(1, 11))).toBeNull(); // first run just records the time
-    expect(await q.checkSlots(t(1, 11, 30))).toBeNull();
-    expect(await q.checkSlots(t(1, 20))).toBe(v1.id); // 12:00 and 19:00 missed → only one
-    expect(await q.checkSlots(t(1, 20, 1))).toBeNull();
-    expect(await q.checkSlots(t(2, 12))).toBe(v2.id);
+    expect(await q.checkSlots(t(1, 11))).toEqual([]); // first run just records the time
+    expect(await q.checkSlots(t(1, 11, 30))).toEqual([]);
+    expect(await q.checkSlots(t(1, 20))).toEqual([v1.id]); // 12:00 and 19:00 missed → only one
+    expect(await q.checkSlots(t(1, 20, 1))).toEqual([]);
+    expect(await q.checkSlots(t(2, 12))).toEqual([v2.id]);
   });
 
   it("skips videos still uploading", async () => {
     await connectAll();
     await addVideo({ position: 1, status: "uploading" });
     const v2 = await addVideo({ position: 2 });
-    expect(await q.releaseNextVideo()).toBe(v2.id);
+    expect(await q.releaseNextVideo("p1")).toBe(v2.id);
   });
 
   it("holds a video when an account it needs is disconnected", async () => {
     await connectAll();
     const v = await addVideo();
-    await tokens.markAccountError("instagram", "expired");
-    expect(await q.releaseNextVideo()).toBeNull();
+    await tokens.markAccountError("p1", "instagram", "expired");
+    expect(await q.releaseNextVideo("p1")).toBeNull();
     expect(await q.missingPlatforms(v)).toEqual(["instagram"]);
-    await tokens.saveAccount("instagram", { status: "ok", error: null });
-    expect(await q.releaseNextVideo()).toBe(v.id);
+    await tokens.saveAccount("p1", "instagram", { status: "ok", error: null });
+    expect(await q.releaseNextVideo("p1")).toBe(v.id);
+  });
+});
+
+describe("two pages", () => {
+  it("each page posts its own next video at its own times", async () => {
+    await connectAll();
+    await q.updateSettings((s) => { s.timezone = "UTC"; s.pages.p1.slots = ["12:00"]; s.pages.p2.slots = ["15:00"]; });
+    const a = await addVideo({ pageId: "p1", position: 1 });
+    const b = await addVideo({ pageId: "p2", position: 1 });
+    const t = (h: number) => zonedToDate(2026, 5, 1, h, 0, "UTC");
+    await q.checkSlots(t(9)); // first run
+    expect(await q.checkSlots(t(12))).toEqual([a.id]);
+    expect(await q.checkSlots(t(15))).toEqual([b.id]);
+  });
+
+  it("uploads use the accounts of the video's page", async () => {
+    const v = await addVideo({ pageId: "p2" });
+    await q.releaseVideo(v.id);
+    const { ups, calls } = fakeUploaders({ youtube: [ok("y")], instagram: [ok("i")] });
+    await run(ups);
+    expect(calls.map((c) => c.page)).toEqual(["p2", "p2"]);
+  });
+
+  it("an account problem on one page doesn't hold the other page", async () => {
+    await connectAll();
+    await tokens.markAccountError("p1", "youtube", "expired");
+    await addVideo({ pageId: "p1" });
+    const b = await addVideo({ pageId: "p2" });
+    expect(await q.releaseNextVideo("p1")).toBeNull();
+    expect(await q.releaseNextVideo("p2")).toBe(b.id);
+  });
+
+  it("refuses the same YouTube channel on both pages", async () => {
+    await connectAll();
+    const f = async (url: any) => String(url).includes("channels")
+      ? Response.json({ items: [{ id: "UC-p1", snippet: { title: "Funny" } }] })
+      : Response.json({ access_token: "a", refresh_token: "r", expires_in: 3600 });
+    await expect(tokens.youtubeFinishConnect("p2", "code", q.pageName, f as any)).rejects.toThrow(/already connected to "Page 1"/);
+  });
+
+  it("old single-page data moves to page 1", async () => {
+    await kv().setJSON("accounts/youtube", { platform: "youtube", displayName: "Old", refreshToken: "r", status: "ok" });
+    await kv().setJSON("settings", { timezone: "UTC", slots: ["08:00"], youtubePrivacy: "public", addShortsTag: true });
+    expect((await tokens.getAccount("p1", "youtube"))!.displayName).toBe("Old");
+    expect(await tokens.getAccount("p2", "youtube")).toBeNull();
+    expect((await q.getSettings()).pages.p1.slots).toEqual(["08:00"]);
+    const v = await addVideo({ pageId: undefined } as any);
+    expect(q.pageOf((await q.getVideo(v.id))!)).toBe("p1");
+    await tokens.saveAccount("p1", "youtube", { accessToken: "new" });
+    expect((await tokens.getAccount("p1", "youtube"))!.refreshToken).toBe("r"); // kept while moving
+    expect(await kv().getJSON("accounts/youtube")).toBeNull();
   });
 });
 
@@ -139,7 +192,8 @@ describe("posting", () => {
     const p = await posts(v.id);
     expect([p.youtube!.status, p.youtube!.lastError]).toEqual(["failed", "rejected"]);
     expect(p.instagram!.status).toBe("failed");
-    expect((await tokens.getAccount("instagram"))!.status).toBe("error");
+    expect((await tokens.getAccount("p1", "instagram"))!.status).toBe("error");
+    expect((await tokens.getAccount("p2", "instagram"))!.status).toBe("ok"); // other page untouched
   });
 
   it("limits make posts wait without counting a try", async () => {

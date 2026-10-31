@@ -83,7 +83,7 @@ describe("login", () => {
 });
 
 describe("upload", () => {
-  const meta = { title: "My short", description: "#fun", platforms: ["youtube", "instagram"], fileName: "a.mp4", width: 1080, height: 1920, duration: 12 };
+  const meta = { pageId: "p1", title: "My short", description: "#fun", platforms: ["youtube", "instagram"], fileName: "a.mp4", width: 1080, height: 1920, duration: 12 };
 
   it("chunked upload → ready in queue", async () => {
     const b = await loggedIn();
@@ -104,8 +104,9 @@ describe("upload", () => {
     expect(v.status).toBe("ready");
     expect([...(await q.readRange(v, 0, size))].length).toBe(size);
     const d = (await b.call("GET", "/api/dashboard")).json;
-    expect(d.queued[0].title).toBe("My short");
-    expect(d.queued[0].posts.youtube.resume).toBeUndefined(); // internals never sent to the browser
+    expect(d.pages[0].queued[0].title).toBe("My short");
+    expect(d.pages[1].queued).toEqual([]);
+    expect(d.pages[0].queued[0].posts.youtube.resume).toBeUndefined(); // internals never sent to the browser
   });
 
   it("rejects bad videos with clear messages", async () => {
@@ -116,6 +117,7 @@ describe("upload", () => {
     expect((await b.call("POST", "/api/videos", { ...meta, size: 100, fileName: "a.webm" })).json.error).toMatch(/MP4/);
     expect((await b.call("POST", "/api/videos", { ...meta, size: 100, platforms: [] })).json.error).toMatch(/platform/);
     expect((await b.call("POST", "/api/videos", { ...meta, size: 100, title: "" })).json.error).toMatch(/title/);
+    expect((await b.call("POST", "/api/videos", { ...meta, size: 100, pageId: "p9" })).json.error).toMatch(/which page/);
     const c = await b.call("POST", "/api/videos", { ...meta, size: 100 });
     const notVideo = await b.call("PUT", `/api/videos/${c.json.id}/chunks/0`, undefined, { body: new Uint8Array(100) });
     expect(notVideo.json.error).toMatch(/doesn't look like an MP4/);
@@ -129,7 +131,9 @@ describe("upload", () => {
     await b.call("PUT", `/api/videos/${c.json.id}/chunks/0`, undefined, { body: mp4Bytes(100) });
     await b.call("POST", `/api/videos/${c.json.id}/complete`, {});
     expect((await b.call("POST", `/api/videos/${c.json.id}/post-now`, {})).json.error).toMatch(/Connect YouTube/);
-    await tokens.saveAccount("youtube", { accessToken: "a", refreshToken: "r", status: "ok" });
+    await tokens.saveAccount("p2", "youtube", { accessToken: "a", refreshToken: "r", status: "ok" });
+    expect((await b.call("POST", `/api/videos/${c.json.id}/post-now`, {})).json.error).toMatch(/Connect YouTube for "Page 1"/);
+    await tokens.saveAccount("p1", "youtube", { accessToken: "a", refreshToken: "r", status: "ok" });
     expect((await b.call("POST", `/api/videos/${c.json.id}/post-now`, {})).status).toBe(200);
     expect((await q.getVideo(c.json.id))!.releasedAt).toBeTruthy();
   });
@@ -144,7 +148,7 @@ describe("upload", () => {
       ids.push(c.json.id);
     }
     await b.call("POST", `/api/videos/${ids[1]}/move`, { direction: -1 });
-    expect((await b.call("GET", "/api/dashboard")).json.queued.map((v: any) => v.title)).toEqual(["two", "one"]);
+    expect((await b.call("GET", "/api/dashboard")).json.pages[0].queued.map((v: any) => v.title)).toEqual(["two", "one"]);
     await b.call("POST", `/api/videos/${ids[0]}/edit`, { title: "uno", description: "x" });
     expect((await q.getVideo(ids[0]))!.title).toBe("uno");
     await b.call("POST", `/api/videos/${ids[0]}/delete`, {});
@@ -156,23 +160,29 @@ describe("upload", () => {
 describe("settings & accounts", () => {
   it("saves schedule and rejects bad times", async () => {
     const b = await loggedIn();
-    expect((await b.call("POST", "/api/settings", { timezone: "Asia/Jerusalem", slots: "19:00, 9:05", youtubePrivacy: "unlisted", addShortsTag: false })).status).toBe(200);
+    expect((await b.call("POST", "/api/settings", { timezone: "Asia/Jerusalem", youtubePrivacy: "unlisted", addShortsTag: false })).status).toBe(200);
+    expect((await b.call("POST", "/api/pages/p2", { name: "Cooking", slots: "19:00, 9:05" })).status).toBe(200);
     const s = await q.getSettings();
-    expect([s.timezone, s.slots, s.youtubePrivacy, s.addShortsTag]).toEqual(["Asia/Jerusalem", ["09:05", "19:00"], "unlisted", false]);
-    expect((await b.call("POST", "/api/settings", { timezone: "UTC", slots: "25:99" })).json.error).toMatch(/not a time/);
-    expect((await b.call("POST", "/api/settings", { timezone: "Mars/Base", slots: "" })).json.error).toMatch(/timezone/);
+    expect([s.timezone, s.youtubePrivacy, s.addShortsTag]).toEqual(["Asia/Jerusalem", "unlisted", false]);
+    expect(s.pages.p2).toMatchObject({ name: "Cooking", slots: ["09:05", "19:00"] });
+    expect(s.pages.p1.slots).toEqual(["12:00", "19:00"]);
+    expect((await b.call("POST", "/api/pages/p1", { name: "Funny", slots: "25:99" })).json.error).toMatch(/not a time/);
+    expect((await b.call("POST", "/api/pages/p1", { name: "", slots: "" })).json.error).toMatch(/name/);
+    expect((await b.call("POST", "/api/settings", { timezone: "Mars/Base" })).json.error).toMatch(/timezone/);
+    const d = (await b.call("GET", "/api/dashboard")).json;
+    expect(d.pages.map((p: any) => p.name)).toEqual(["Page 1", "Cooking"]);
   });
 
   it("YouTube connect uses offline access and checks the security state", async () => {
     const b = await loggedIn();
-    const r = await b.call("GET", "/api/connect/youtube");
+    const r = await b.call("GET", "/api/connect/p2/youtube");
     const loc = r.res.headers.get("location")!;
     expect(loc).toContain("accounts.google.com");
     expect(loc).toContain("access_type=offline");
     expect(loc).toContain(encodeURIComponent(`${BASE}/api/connect/youtube/callback`));
     const bad = await b.call("GET", "/api/connect/youtube/callback?code=abc&state=forged");
     expect(bad.res.headers.get("location")).toMatch(/security%20check/);
-    expect(await tokens.getAccount("youtube")).toBeNull();
+    expect(await tokens.getAccount("p2", "youtube")).toBeNull();
   });
 
   it("change password", async () => {
@@ -185,23 +195,23 @@ describe("settings & accounts", () => {
 
 describe("tokens", () => {
   it("YouTube token refreshes when expired, marks account on revoke", async () => {
-    await tokens.saveAccount("youtube", { accessToken: "old", refreshToken: "r", status: "ok", tokenExpiresAt: new Date(Date.now() + 3600e3).toISOString() });
-    expect(await tokens.youtubeAccessToken(false, fakeFetch(() => { throw new Error("should not refresh"); }))).toBe("old");
-    await tokens.saveAccount("youtube", { tokenExpiresAt: new Date(Date.now() - 1000).toISOString() });
-    expect(await tokens.youtubeAccessToken(false, fakeFetch(() => Response.json({ access_token: "new", expires_in: 3600 })))).toBe("new");
-    await expect(tokens.youtubeAccessToken(true, fakeFetch(() => Response.json({ error: "invalid_grant" }, { status: 400 })))).rejects.toThrow(/Reconnect/);
-    expect((await tokens.getAccount("youtube"))!.status).toBe("error");
+    await tokens.saveAccount("p1", "youtube", { accessToken: "old", refreshToken: "r", status: "ok", tokenExpiresAt: new Date(Date.now() + 3600e3).toISOString() });
+    expect(await tokens.youtubeAccessToken("p1", false, fakeFetch(() => { throw new Error("should not refresh"); }))).toBe("old");
+    await tokens.saveAccount("p1", "youtube", { tokenExpiresAt: new Date(Date.now() - 1000).toISOString() });
+    expect(await tokens.youtubeAccessToken("p1", false, fakeFetch(() => Response.json({ access_token: "new", expires_in: 3600 })))).toBe("new");
+    await expect(tokens.youtubeAccessToken("p1", true, fakeFetch(() => Response.json({ error: "invalid_grant" }, { status: 400 })))).rejects.toThrow(/Reconnect/);
+    expect((await tokens.getAccount("p1", "youtube"))!.status).toBe("error");
   });
 
   it("Instagram token renews weekly", async () => {
-    await tokens.saveAccount("instagram", { accessToken: "t1", status: "ok", tokenRefreshedAt: new Date(Date.now() - 8 * 86400e3).toISOString() });
-    expect(await tokens.refreshInstagramToken(false, fakeFetch(() => Response.json({ access_token: "t2", expires_in: 5184000 })))).toBe(true);
-    expect((await tokens.getAccount("instagram"))!.accessToken).toBe("t2");
-    expect(await tokens.refreshInstagramToken(false, fakeFetch(() => { throw new Error("no call"); }))).toBe(false);
+    await tokens.saveAccount("p2", "instagram", { accessToken: "t1", status: "ok", tokenRefreshedAt: new Date(Date.now() - 8 * 86400e3).toISOString() });
+    expect(await tokens.refreshInstagramToken("p2", false, fakeFetch(() => Response.json({ access_token: "t2", expires_in: 5184000 })))).toBe(true);
+    expect((await tokens.getAccount("p2", "instagram"))!.accessToken).toBe("t2");
+    expect(await tokens.refreshInstagramToken("p2", false, fakeFetch(() => { throw new Error("no call"); }))).toBe(false);
   });
 
   it("personal Instagram accounts are refused", async () => {
     const f = fakeFetch(() => Response.json({ user_id: "1", username: "me", account_type: "PERSONAL" }));
-    await expect(tokens.instagramConnectWithToken("tok", f)).rejects.toThrow(/personal/);
+    await expect(tokens.instagramConnectWithToken("p1", "tok", q.pageName, f)).rejects.toThrow(/personal/);
   });
 });

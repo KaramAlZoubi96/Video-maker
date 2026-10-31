@@ -29,7 +29,7 @@ export async function addVideo(opts: Partial<Video> & { platforms?: string[]; by
   const v: Video = {
     id, uploader: "me", fileName: "a.mp4", title: "T", description: "D", size: bytes.length, chunkSize,
     chunkCount: Math.ceil(bytes.length / chunkSize), width: 1080, height: 1920, duration: 10, status: "ready",
-    position: opts.position ?? 1, createdAt: new Date().toISOString(), posts, ...opts,
+    position: opts.position ?? 1, createdAt: new Date().toISOString(), posts, pageId: "p1", ...opts,
   } as Video;
   delete (v as any).platforms; delete (v as any).bytes;
   await kv().setJSON(videoKey(id), v);
