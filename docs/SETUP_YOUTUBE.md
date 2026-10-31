@@ -32,9 +32,13 @@ You need a Google Cloud "OAuth client" so the app can upload to your channel.
    - `GOOGLE_CLIENT_SECRET` = `GOCSPX-xxxx`
 5. Netlify → **Deploys → Trigger deploy → Deploy site** (variables apply after a new deploy).
 
-## 4. Connect in the app
-Settings → **Connect YouTube** → pick the Google account (and the channel, if it's a brand account) → Allow.
-You'll see "✓ Connected: *your channel*".
+## 4. Connect your 2 channels
+The website has 2 pages, and each page gets its own YouTube channel. One Google Cloud project works for both.
+1. **Settings → Page 1 → YouTube → Connect** → choose the Google account / channel for page 1 → Allow.
+2. **Settings → Page 2 → YouTube → Connect** → choose the **other** channel → Allow.
+
+You'll see "✓ *channel name*" on each page. If you pick the same channel twice by mistake, the site tells you.
+(Both channels belong to one Google account as "brand accounts"? Google shows a channel picker; choose the right one.)
 
 ## 5. Public videos: request the API audit
 Google rule: API projects that haven't passed a YouTube compliance audit can only upload **private** videos —
@@ -47,7 +51,8 @@ Until it's approved:
 - Accept that videos land as private and make them public later.
 
 ## Limits
-- Default quota is 10,000 units/day; one upload costs about 1,600 → **about 6 uploads per day**.
+- Default quota is 10,000 units/day; one upload costs about 1,600 → **about 6 uploads per day in total for both pages**
+  (the limit belongs to the Google Cloud project, not to each channel).
   The app counts uploads and waits for the daily reset (midnight Pacific time) instead of failing.
 - Change the cap with the `YOUTUBE_DAILY_UPLOAD_LIMIT` environment variable in Netlify if Google gives you more quota.
 

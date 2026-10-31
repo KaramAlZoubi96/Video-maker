@@ -1,5 +1,7 @@
 # Connect Instagram (one-time, ~15 minutes)
 
+You have 2 Instagram accounts (one per page). Do steps 1 and 3 for **both** accounts; one Meta app is enough.
+
 Uses the official **Instagram API with Instagram Login**. No Facebook Page is needed.
 The website uploads the video file directly to Instagram.
 
@@ -21,7 +23,9 @@ Instagram app → Profile → ☰ → **Account type and tools → Switch to pro
 ### Way A (easiest): paste a token
 1. App dashboard → **Instagram → API setup with Instagram login** → section **Generate access tokens** →
    **Add account** → log in → **Generate token** → copy it.
-2. In the Autoposter: *Settings → Instagram → "Or paste an access token…"* → paste → **Save token**.
+2. On the website: *Settings → Page 1 → Instagram → "Paste an access token instead"* → paste → **Save token**.
+3. Back in Meta: **Add account** again → log in with the **second** Instagram account → **Generate token** →
+   paste it into *Settings → Page 2 → Instagram*.
 
 The app renews this token automatically every week, so it won't expire (tokens last 60 days).
 
@@ -31,7 +35,9 @@ The app renews this token automatically every week, so it won't expire (tokens l
 2. Copy the **Instagram app ID** and **Instagram app secret** shown on that page (they are different from the
    Facebook App ID) into Netlify → **Site configuration → Environment variables** as
    `INSTAGRAM_APP_ID` and `INSTAGRAM_APP_SECRET`.
-3. Netlify → **Deploys → Trigger deploy** → then on the website: *Settings → Connect Instagram*.
+3. Netlify → **Deploys → Trigger deploy** → then on the website: *Settings → Page 1 → Instagram → Connect*, and
+   the same for Page 2 (log in with the second account; if Instagram logs you in automatically, log out of
+   instagram.com first).
 
 ## Video rules (checked when you upload)
 - MP4 or MOV, vertical or square, 3 seconds to 3 minutes, max 150 MB.
