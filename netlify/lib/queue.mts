@@ -15,7 +15,8 @@ import { getJSON, kv, update } from "./store.mts";
 import { latestSlotBefore, nextQuotaReset, pacificDay } from "./time.mts";
 import * as tokens from "./tokens.mts";
 import {
-  AuthError, CHUNK_SIZE, DEFAULT_SETTINGS, DeferError, PermanentError, type Platform, PLATFORMS, type Post, PublishError, type Settings, type StepContext, type StepResult, TransientError, type Video, config,
+  AuthError, DEFAULT_SETTINGS, DeferError, PAGE_IDS, type PageId, PermanentError, type Platform, PLATFORMS, type Post,
+  PublishError, type Settings, type StepContext, type StepResult, type Video, config,
 } from "./types.mts";
 import { YouTubeUploader } from "./youtube.mts";
 
@@ -27,15 +28,30 @@ export const chunkKey = (id: string, n: number) => `chunks/${id}/${String(n).pad
 export const thumbKey = (id: string) => `thumbs/${id}`;
 
 // ---- settings ---------------------------------------------------------------
+/** Fill in defaults, and move old single-page settings into page 1. */
+function withDefaults(cur: Partial<Settings> | null): Settings {
+  const s = { ...structuredClone(DEFAULT_SETTINGS), ...(cur ?? {}) } as Settings;
+  s.pages = { ...structuredClone(DEFAULT_SETTINGS.pages), ...(cur?.pages ?? {}) };
+  if (!cur?.pages && cur?.slots) {
+    s.pages.p1 = { ...s.pages.p1, slots: cur.slots, lastSlotRun: cur.lastSlotRun ?? null };
+  }
+  delete s.slots;
+  delete s.lastSlotRun;
+  return s;
+}
 export async function getSettings(): Promise<Settings> {
-  return { ...DEFAULT_SETTINGS, ...((await getJSON<Settings>("settings")) ?? {}) };
+  return withDefaults(await getJSON<Settings>("settings"));
 }
 export async function updateSettings(fn: (s: Settings) => void) {
   await update<Settings>("settings", (cur) => {
-    const s = { ...DEFAULT_SETTINGS, ...(cur ?? {}) };
+    const s = withDefaults(cur);
     fn(s);
     return s;
   });
+}
+export const pageOf = (v: Video): PageId => v.pageId ?? "p1";
+export async function pageName(id: PageId): Promise<string> {
+  return (await getSettings()).pages[id].name;
 }
 
 // ---- videos -----------------------------------------------------------------
@@ -86,7 +102,7 @@ export async function deleteVideoFiles(id: string) {
 export async function missingPlatforms(v: Video): Promise<Platform[]> {
   const out: Platform[] = [];
   for (const [p, post] of Object.entries(v.posts) as [Platform, Post][]) {
-    if (post.status === "pending" && !(await tokens.platformReady(p))) out.push(p);
+    if (post.status === "pending" && !(await tokens.platformReady(pageOf(v), p))) out.push(p);
   }
   return out;
 }
@@ -103,10 +119,10 @@ export async function releaseVideo(id: string, now = new Date()): Promise<boolea
   return ok;
 }
 
-/** Release the top video of the queue. Held (not failed) if an account it needs is disconnected. */
-export async function releaseNextVideo(now = new Date()): Promise<string | null> {
+/** Release the top video of a page's queue. Held (not failed) if an account it needs is disconnected. */
+export async function releaseNextVideo(page: PageId, now = new Date()): Promise<string | null> {
   const queue = (await listVideos())
-    .filter((v) => v.status === "ready" && !v.releasedAt && Object.values(v.posts).some((p) => p?.status === "pending"))
+    .filter((v) => pageOf(v) === page && v.status === "ready" && !v.releasedAt && Object.values(v.posts).some((p) => p?.status === "pending"))
     .sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
   const top = queue[0];
   if (!top) return null;
@@ -118,18 +134,25 @@ export async function releaseNextVideo(now = new Date()): Promise<string | null>
   return (await releaseVideo(top.id, now)) ? top.id : null;
 }
 
-export async function checkSlots(now = new Date()): Promise<string | null> {
-  const s = await getSettings();
-  if (!s.slots.length) return null;
-  if (!s.lastSlotRun) {
-    // First run: slots that already passed are not "missed".
-    await updateSettings((x) => { x.lastSlotRun = now.toISOString(); });
-    return null;
+/** Each page posts at its own times. Returns the ids of videos released now. */
+export async function checkSlots(now = new Date()): Promise<string[]> {
+  const released: string[] = [];
+  for (const page of PAGE_IDS) {
+    const s = await getSettings();
+    const ps = s.pages[page];
+    if (!ps.slots.length) continue;
+    if (!ps.lastSlotRun) {
+      // First run: slots that already passed are not "missed".
+      await updateSettings((x) => { x.pages[page].lastSlotRun = now.toISOString(); });
+      continue;
+    }
+    const slot = latestSlotBefore(now, ps.slots, s.timezone);
+    if (!slot || slot <= new Date(ps.lastSlotRun)) continue;
+    await updateSettings((x) => { x.pages[page].lastSlotRun = now.toISOString(); });
+    const id = await releaseNextVideo(page, now);
+    if (id) released.push(id);
   }
-  const slot = latestSlotBefore(now, s.slots, s.timezone);
-  if (!slot || slot <= new Date(s.lastSlotRun)) return null;
-  await updateSettings((x) => { x.lastSlotRun = now.toISOString(); });
-  return releaseNextVideo(now);
+  return released;
 }
 
 // ---- posting ----------------------------------------------------------------
@@ -143,17 +166,17 @@ export function buildText(v: Video, platform: Platform, s: Settings): { title: s
 }
 
 export interface Uploaders {
-  youtube: () => { step(ctx: StepContext, onSessionStart: () => Promise<void>): Promise<StepResult> };
-  instagram: () => Promise<{ step(ctx: StepContext): Promise<StepResult> }>;
+  youtube: (page: PageId) => { step(ctx: StepContext, onSessionStart: () => Promise<void>): Promise<StepResult> };
+  instagram: (page: PageId) => Promise<{ step(ctx: StepContext): Promise<StepResult> }>;
 }
 
 export const realUploaders: Uploaders = {
-  youtube: () => {
+  youtube: (page) => {
     if (!tokens.youtubeConfigured()) throw new AuthError("YouTube keys are missing in Netlify environment variables (see docs/SETUP_YOUTUBE.md).");
-    return new YouTubeUploader((force) => tokens.youtubeAccessToken(force));
+    return new YouTubeUploader((force) => tokens.youtubeAccessToken(page, force));
   },
-  instagram: async () => {
-    const acc = await tokens.getAccount("instagram");
+  instagram: async (page) => {
+    const acc = await tokens.getAccount(page, "instagram");
     if (!acc?.accessToken) throw new AuthError("Instagram is not connected. Connect it in Settings.");
     if (acc.status === "error") throw new AuthError(acc.error || "Instagram connection has a problem. Reconnect it in Settings.");
     return new InstagramUploader(acc.accessToken, acc.remoteUserId ?? "", config.igApiVersion());
@@ -200,21 +223,22 @@ export async function stepPost(v: Video, platform: Platform, deadline: number, u
   try {
     if (v.filesDeleted) throw new PermanentError("Video file was already removed from storage.");
     if (platform === "youtube") {
-      result = await ups.youtube().step(ctx, async () => {
+      result = await ups.youtube(pageOf(v)).step(ctx, async () => {
+        // The daily limit belongs to your Google Cloud project, so both pages share it.
         if ((await youtubeCountToday()) >= config.ytDailyLimit()) {
           throw new DeferError("Waiting for the YouTube daily upload limit to reset.", nextQuotaReset());
         }
         await bumpYoutubeCount();
       });
     } else {
-      result = await (await ups.instagram()).step(ctx);
+      result = await (await ups.instagram(pageOf(v))).step(ctx);
     }
   } catch (e: any) {
     const msg = e?.message ?? String(e);
     if (e instanceof DeferError) {
       await updatePost(v.id, platform, { status: "pending", nextAttemptAt: e.until.toISOString(), note: msg });
     } else if (e instanceof AuthError) {
-      await tokens.markAccountError(platform, msg);
+      await tokens.markAccountError(pageOf(v), platform, msg);
       await updatePost(v.id, platform, { status: "failed", lastError: msg, note: null, nextAttemptAt: null });
     } else if (e instanceof PermanentError) {
       await updatePost(v.id, platform, { status: "failed", lastError: msg, note: null, nextAttemptAt: null });
@@ -295,15 +319,17 @@ export async function maintenance(now = Date.now(), f: typeof fetch = fetch) {
   const s = await getSettings();
   if (s.lastMaintenance && now - Date.parse(s.lastMaintenance) < DAY / 4) return;
   await updateSettings((x) => { x.lastMaintenance = new Date(now).toISOString(); });
-  try {
-    await tokens.refreshInstagramToken(false, f);
-  } catch (e) {
-    console.warn("Instagram token refresh failed", e);
-  }
-  try {
-    if (await tokens.getAccount("youtube")) await tokens.youtubeAccessToken(false, f);
-  } catch (e) {
-    console.warn("YouTube token check failed", e);
+  for (const page of PAGE_IDS) {
+    try {
+      await tokens.refreshInstagramToken(page, false, f);
+    } catch (e) {
+      console.warn(`Instagram token refresh failed (${page})`, e);
+    }
+    try {
+      if (await tokens.getAccount(page, "youtube")) await tokens.youtubeAccessToken(page, false, f);
+    } catch (e) {
+      console.warn(`YouTube token check failed (${page})`, e);
+    }
   }
   for (const v of await listVideos()) {
     const posts = Object.values(v.posts);

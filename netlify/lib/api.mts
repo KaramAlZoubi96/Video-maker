@@ -6,7 +6,7 @@ import { kv } from "./store.mts";
 import { isValidTimeZone, nextSlotAfter, normalizeSlots, parseSlot } from "./time.mts";
 import * as tokens from "./tokens.mts";
 import {
-  CHUNK_SIZE, DESC_MAX, MAX_DURATION, MAX_FILE_BYTES, MIN_DURATION, type Platform, PLATFORMS, type Post, PublishError, TITLE_MAX, type Video, platformName,
+  CHUNK_SIZE, DESC_MAX, isPageId, PAGE_IDS, type PageId, MAX_DURATION, MAX_FILE_BYTES, MIN_DURATION, type Platform, PLATFORMS, type Post, PublishError, TITLE_MAX, type Video, platformName,
 } from "./types.mts";
 
 type Ctx = { waitUntil?: (p: Promise<unknown>) => void };
@@ -74,18 +74,25 @@ const route = (method: string, path: string, h: Handler) => routes.push([method,
 route("GET", "/api/dashboard", async () => {
   const s = await q.getSettings();
   const all = await q.listVideos();
-  const queued = all.filter((v) => !v.releasedAt).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
-  const released = all.filter((v) => v.releasedAt);
-  const done = released
-    .filter((v) => Object.values(v.posts).every((p) => p?.status === "published"))
-    .sort((a, b) => (b.releasedAt ?? "").localeCompare(a.releasedAt ?? ""))
-    .slice(0, 30);
-  const active = released.filter((v) => !done.includes(v) && !Object.values(v.posts).every((p) => p?.status === "published"));
-  const next = nextSlotAfter(new Date(), s.slots, s.timezone);
-  return json({
-    queued: queued.map(publicVideo), active: active.map(publicVideo), done: done.map(publicVideo),
-    nextSlot: next?.toISOString() ?? null, timezone: s.timezone, problems: await tokens.accountProblems(),
-  });
+  const pages = [];
+  const problems: string[] = [];
+  for (const id of PAGE_IDS) {
+    const mine = all.filter((v) => q.pageOf(v) === id);
+    const queued = mine.filter((v) => !v.releasedAt).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
+    const released = mine.filter((v) => v.releasedAt);
+    const isDone = (v: Video) => Object.values(v.posts).every((p) => p?.status === "published");
+    const done = released.filter(isDone).sort((a, b) => (b.releasedAt ?? "").localeCompare(a.releasedAt ?? ""));
+    const active = released.filter((v) => !isDone(v)).sort((a, b) => (a.releasedAt ?? "").localeCompare(b.releasedAt ?? ""));
+    const next = nextSlotAfter(new Date(), s.pages[id].slots, s.timezone);
+    const accounts: Record<string, string | null> = {};
+    for (const p of PLATFORMS) accounts[p] = (await tokens.getAccount(id, p))?.displayName ?? null;
+    problems.push(...(await tokens.accountProblems(id, s.pages[id].name)));
+    pages.push({
+      id, name: s.pages[id].name, nextSlot: next?.toISOString() ?? null, accounts, publishedCount: done.length,
+      queued: queued.map(publicVideo), active: active.map(publicVideo), done: done.slice(0, 30).map(publicVideo),
+    });
+  }
+  return json({ pages, timezone: s.timezone, problems });
 });
 
 route("POST", "/api/videos", async (req, _m, user) => {
@@ -96,6 +103,7 @@ route("POST", "/api/videos", async (req, _m, user) => {
     size: Number(b.size), width: Number(b.width), height: Number(b.height), duration: Number(b.duration),
     fileName: String(b.fileName ?? ""),
   };
+  if (!isPageId(b.pageId)) return fail("Choose which page this video is for.");
   const err = validateText(title, description, platforms) ?? validateVideoMeta(meta);
   if (err) return fail(err);
   const id = `${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
@@ -106,7 +114,7 @@ route("POST", "/api/videos", async (req, _m, user) => {
     id, uploader: user, fileName: meta.fileName.slice(0, 200), title: title.trim(), description: description.trim(),
     size: meta.size, chunkSize: CHUNK_SIZE, chunkCount: Math.ceil(meta.size / CHUNK_SIZE),
     width: meta.width, height: meta.height, duration: meta.duration, status: "uploading", position: 0,
-    createdAt: now, posts,
+    createdAt: now, posts, pageId: b.pageId,
   };
   await kv().setJSON(q.videoKey(id), video);
   if (typeof b.thumbnail === "string" && b.thumbnail.startsWith("data:image/jpeg;base64,") && b.thumbnail.length < 300_000) {
@@ -139,7 +147,7 @@ route("POST", "/api/videos/([a-z0-9]+)/complete", async (_req, m) => {
   const missing = [];
   for (let n = 0; n < v.chunkCount; n++) if (!have.has(q.chunkKey(v.id, n))) missing.push(n);
   if (missing.length) return json({ error: "Some pieces are missing.", missing }, 409);
-  const maxPos = Math.max(0, ...(await q.listVideos()).map((x) => x.position));
+  const maxPos = Math.max(0, ...(await q.listVideos()).filter((x) => q.pageOf(x) === q.pageOf(v)).map((x) => x.position));
   await q.updateVideo(v.id, (x) => {
     x.status = "ready";
     x.position = maxPos + 1;
@@ -185,7 +193,9 @@ route("POST", "/api/videos/([a-z0-9]+)/delete", async (_req, m) => {
 
 route("POST", "/api/videos/([a-z0-9]+)/move", async (req, m) => {
   const dir = Number((await body(req)).direction) < 0 ? -1 : 1;
-  const queue = (await q.listVideos()).filter((v) => !v.releasedAt).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
+  const me = await q.getVideo(m[1]);
+  if (!me) return json({ ok: true });
+  const queue = (await q.listVideos()).filter((v) => !v.releasedAt && q.pageOf(v) === q.pageOf(me)).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
   const i = queue.findIndex((v) => v.id === m[1]);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= queue.length) return json({ ok: true });
@@ -201,7 +211,7 @@ route("POST", "/api/videos/([a-z0-9]+)/post-now", async (_req, m, _u, ctx) => {
   const v = await q.getVideo(m[1]);
   if (!v || v.status !== "ready") return fail("This video isn't ready yet.");
   const missing = await q.missingPlatforms(v);
-  if (missing.length) return fail(`Connect ${missing.map(platformName).join(" and ")} in Settings first.`);
+  if (missing.length) return fail(`Connect ${missing.map(platformName).join(" and ")} for "${await q.pageName(q.pageOf(v))}" in Settings first.`);
   if (!(await q.releaseVideo(v.id))) return fail("This video already started posting.");
   ctx.waitUntil?.(q.runScheduler(20000).catch((e) => console.error(e)));
   return json({ ok: true, message: "Posting started. It updates here every few seconds." });
@@ -211,7 +221,7 @@ route("POST", "/api/videos/([a-z0-9]+)/retry/(youtube|instagram)", async (_req, 
   const platform = m[2] as Platform;
   const v = await q.getVideo(m[1]);
   if (!v?.posts[platform] || v.posts[platform]!.status !== "failed") return json({ ok: true });
-  if (!(await tokens.platformReady(platform))) return fail(`Connect ${platformName(platform)} in Settings first.`);
+  if (!(await tokens.platformReady(q.pageOf(v), platform))) return fail(`Connect ${platformName(platform)} for "${await q.pageName(q.pageOf(v))}" in Settings first.`);
   await q.updateVideo(v.id, (x) => {
     const p = x.posts[platform];
     if (!p || p.status !== "failed") return false;
@@ -226,34 +236,50 @@ route("POST", "/api/videos/([a-z0-9]+)/retry/(youtube|instagram)", async (_req, 
 // ---- settings ---------------------------------------------------------------
 route("GET", "/api/settings", async () => {
   const s = await q.getSettings();
-  const accounts: Record<string, unknown> = {};
-  for (const p of PLATFORMS) {
-    const a = await tokens.getAccount(p);
-    accounts[p] = a ? { displayName: a.displayName, status: a.status, error: a.error, tokenExpiresAt: a.tokenExpiresAt } : null;
+  const pages = [];
+  for (const id of PAGE_IDS) {
+    const accounts: Record<string, unknown> = {};
+    for (const p of PLATFORMS) {
+      const a = await tokens.getAccount(id, p);
+      accounts[p] = a ? { displayName: a.displayName, status: a.status, error: a.error, tokenExpiresAt: a.tokenExpiresAt } : null;
+    }
+    pages.push({ id, name: s.pages[id].name, slots: s.pages[id].slots, accounts });
   }
   return json({
-    timezone: s.timezone, slots: s.slots, youtubePrivacy: s.youtubePrivacy, addShortsTag: s.addShortsTag,
-    accounts, users: await auth.listUsers(),
+    timezone: s.timezone, youtubePrivacy: s.youtubePrivacy, addShortsTag: s.addShortsTag, pages,
+    users: await auth.listUsers(),
     youtubeConfigured: tokens.youtubeConfigured(), instagramOAuthConfigured: tokens.instagramOAuthConfigured(),
     redirectYoutube: tokens.redirectUri("youtube"), redirectInstagram: tokens.redirectUri("instagram"),
   });
 });
 
+/** Save general settings (timezone, YouTube visibility, #Shorts). */
 route("POST", "/api/settings", async (req) => {
   const b = await body(req);
   if (!isValidTimeZone(String(b.timezone))) return fail("Unknown timezone.");
+  const privacy = ["public", "unlisted", "private"].includes(b.youtubePrivacy) ? b.youtubePrivacy : "public";
+  await q.updateSettings((s) => {
+    s.timezone = String(b.timezone);
+    s.youtubePrivacy = privacy;
+    s.addShortsTag = Boolean(b.addShortsTag);
+  });
+  return json({ ok: true, message: "Settings saved." });
+});
+
+/** Save one page's name and posting times. */
+route("POST", "/api/pages/(p1|p2)", async (req, m) => {
+  const id = m[1] as PageId;
+  const b = await body(req);
+  const name = String(b.name ?? "").trim();
+  if (!name || name.length > 40) return fail("Page name: 1-40 characters.");
   const parts = String(b.slots ?? "").split(/[,;]/).map((x) => x.trim()).filter(Boolean);
   const bad = parts.find((p) => !parseSlot(p));
   if (bad) return fail(`'${bad}' is not a time. Use 24h format like 12:00, 19:30.`);
   const slots = normalizeSlots(parts);
-  const privacy = ["public", "unlisted", "private"].includes(b.youtubePrivacy) ? b.youtubePrivacy : "public";
   await q.updateSettings((s) => {
-    s.timezone = String(b.timezone);
-    s.slots = slots;
-    s.youtubePrivacy = privacy;
-    s.addShortsTag = Boolean(b.addShortsTag);
+    s.pages[id] = { ...s.pages[id], name, slots };
   });
-  return json({ ok: true, message: "Settings saved." + (slots.length ? "" : " No times set: videos only post with 'Post now'.") });
+  return json({ ok: true, message: `"${name}" saved.` + (slots.length ? "" : " No times set: this page only posts with 'Post now'.") });
 });
 
 route("POST", "/api/users", async (req) => {
@@ -274,12 +300,12 @@ route("POST", "/api/password", async (req, _m, user) => {
 });
 
 // ---- accounts -----------------------------------------------------------------
-route("GET", "/api/connect/(youtube|instagram)", async (req, m) => {
-  const p = m[1] as Platform;
+route("GET", "/api/connect/(p1|p2)/(youtube|instagram)", async (req, m) => {
+  const page = m[1] as PageId, p = m[2] as Platform;
   if (p === "youtube" && !tokens.youtubeConfigured()) return redirect("/settings.html?error=" + encodeURIComponent("Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Netlify environment variables first."));
   if (p === "instagram" && !tokens.instagramOAuthConfigured()) return redirect("/settings.html?error=" + encodeURIComponent("Add INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET in Netlify, or paste a token instead."));
   const state = randomBytes(24).toString("base64url");
-  const cookie = auth.cookieHeader(req, "sap_oauth", await auth.sign({ state, p, exp: Date.now() + 15 * 60_000 }), 900);
+  const cookie = auth.cookieHeader(req, "sap_oauth", await auth.sign({ state, p, page, exp: Date.now() + 15 * 60_000 }), 900);
   return redirect(p === "youtube" ? tokens.youtubeAuthUrl(state) : tokens.instagramAuthUrl(state), [cookie]);
 });
 
@@ -288,32 +314,37 @@ route("GET", "/api/connect/(youtube|instagram)/callback", async (req, m) => {
   const url = new URL(req.url);
   const clear = auth.cookieHeader(req, "sap_oauth", "", 0);
   const back = (k: "msg" | "error", text: string) => redirect(`/settings.html?${k}=${encodeURIComponent(text)}`, [clear]);
-  const saved = await auth.verify<{ state: string; p: string }>(auth.getCookie(req, "sap_oauth"));
+  const saved = await auth.verify<{ state: string; p: string; page: string }>(auth.getCookie(req, "sap_oauth"));
   if (url.searchParams.get("error")) return back("error", `Connection cancelled: ${url.searchParams.get("error_description") || url.searchParams.get("error")}`);
   const code = url.searchParams.get("code");
-  if (!code || !saved || saved.p !== p || saved.state !== url.searchParams.get("state")) {
+  if (!code || !saved || saved.p !== p || !isPageId(saved.page) || saved.state !== url.searchParams.get("state")) {
     return back("error", "Connection failed (security check). Please try again.");
   }
+  const page = saved.page;
   try {
-    const name = p === "youtube" ? await tokens.youtubeFinishConnect(code) : await tokens.instagramFinishConnect(code);
-    return back("msg", `Connected ${name}.`);
+    const name = p === "youtube"
+      ? await tokens.youtubeFinishConnect(page, code, q.pageName)
+      : await tokens.instagramFinishConnect(page, code, q.pageName);
+    return back("msg", `Connected ${name} to "${await q.pageName(page)}".`);
   } catch (e: any) {
     return back("error", `Could not connect: ${e?.message ?? e}`);
   }
 });
 
-route("POST", "/api/connect/instagram/token", async (req) => {
+route("POST", "/api/connect/(p1|p2)/instagram/token", async (req, m) => {
+  const page = m[1] as PageId;
   const token = String((await body(req)).token ?? "").trim();
   if (!token) return fail("Paste the token first.");
   try {
-    return json({ ok: true, message: `Connected ${await tokens.instagramConnectWithToken(token)}.` });
+    const name = await tokens.instagramConnectWithToken(page, token, q.pageName);
+    return json({ ok: true, message: `Connected ${name} to "${await q.pageName(page)}".` });
   } catch (e: any) {
     return fail(`Could not connect: ${e?.message ?? e}`);
   }
 });
 
-route("POST", "/api/disconnect/(youtube|instagram)", async (_req, m) => {
-  await tokens.disconnect(m[1] as Platform);
+route("POST", "/api/disconnect/(p1|p2)/(youtube|instagram)", async (_req, m) => {
+  await tokens.disconnect(m[1] as PageId, m[2] as Platform);
   return json({ ok: true, message: "Disconnected." });
 });
 

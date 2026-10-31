@@ -2,6 +2,11 @@ export type Platform = "youtube" | "instagram";
 export const PLATFORMS: Platform[] = ["youtube", "instagram"];
 export const platformName = (p: Platform) => (p === "youtube" ? "YouTube" : "Instagram");
 
+/** The site manages 2 pages. Each page has its own YouTube + Instagram + posting times. */
+export type PageId = "p1" | "p2";
+export const PAGE_IDS: PageId[] = ["p1", "p2"];
+export const isPageId = (x: unknown): x is PageId => x === "p1" || x === "p2";
+
 export interface Post {
   status: "pending" | "uploading" | "published" | "failed";
   attempts: number;
@@ -32,6 +37,8 @@ export interface Video {
   releasedAt?: string | null;
   createdAt: string;
   filesDeleted?: boolean;
+  /** Which page this video belongs to (older videos without it belong to p1). */
+  pageId?: PageId;
   posts: Partial<Record<Platform, Post>>;
 }
 
@@ -47,20 +54,31 @@ export interface Account {
   error?: string | null;
 }
 
+export interface PageSettings {
+  name: string;
+  slots: string[];
+  lastSlotRun?: string | null;
+}
+
 export interface Settings {
   timezone: string;
-  slots: string[];
   youtubePrivacy: "public" | "unlisted" | "private";
   addShortsTag: boolean;
-  lastSlotRun?: string | null;
+  pages: Record<PageId, PageSettings>;
   lastMaintenance?: string | null;
+  /** Old single-page fields, read once to move them into pages.p1. */
+  slots?: string[];
+  lastSlotRun?: string | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   timezone: "UTC",
-  slots: ["12:00", "19:00"],
   youtubePrivacy: "public",
   addShortsTag: true,
+  pages: {
+    p1: { name: "Page 1", slots: ["12:00", "19:00"] },
+    p2: { name: "Page 2", slots: ["15:00"] },
+  },
 };
 
 export interface User {
