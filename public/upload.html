@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Upload · Shorts Autoposter</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js"></script>
+</head>
+<body class="hidden">
+<header>
+  <a class="brand" href="/">▶ Shorts Autoposter</a>
+  <nav>
+    <a href="/">Queue</a>
+    <a href="/upload.html">Upload</a>
+    <a href="/settings.html">Settings</a>
+    <button class="link" type="button" onclick="logout()">Log out (<span data-username></span>)</button>
+  </nav>
+</header>
+<main>
+<h1>Upload a video</h1>
+<div id="flash" class="flash hidden"></div>
+<div class="card">
+<form id="f">
+  <label for="file">Video file — MP4 or MOV, vertical, 3–180 seconds, up to 150 MB</label>
+  <input id="file" type="file" accept="video/mp4,video/quicktime,.mp4,.mov,.m4v" required>
+  <div id="info" class="muted small"></div>
+  <label for="title">Title (YouTube)</label>
+  <input id="title" type="text" maxlength="100" required placeholder="Short catchy title">
+  <div class="muted small"><span id="tc">0</span>/100</div>
+  <label for="desc">Description / Instagram caption (hashtags go here)</label>
+  <textarea id="desc" maxlength="2000" placeholder="Write something… #funny"></textarea>
+  <div class="muted small"><span id="dc">0</span>/2000 · Instagram caption = title + this text</div>
+  <label>Post to</label>
+  <div class="check"><input type="checkbox" id="yt" checked> <label for="yt" style="margin:0;font-weight:500">YouTube Shorts</label></div>
+  <div class="check"><input type="checkbox" id="ig" checked> <label for="ig" style="margin:0;font-weight:500">Instagram Reels</label></div>
+  <p><button id="go" type="submit">Upload & add to queue</button></p>
+  <div class="progress" id="pb"><div></div></div>
+  <div id="msg" class="small"></div>
+  <p class="muted small">Keep this page open until the upload finishes.</p>
+</form>
+</div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const MAX = 150 * 1024 * 1024;
+let meta = null;
+
+for (const [i, o] of [["title", "tc"], ["desc", "dc"]]) { const u = () => $(o).textContent = $(i).value.length; $(i).addEventListener("input", u); u(); }
+
+// Read size/length in the browser and grab a thumbnail frame.
+function readVideo(file) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement("video");
+    v.preload = "auto"; v.muted = true; v.playsInline = true;
+    const url = URL.createObjectURL(file);
+    const t = setTimeout(() => { cleanup(); reject(new Error("This browser can't read the video. Export it as MP4 (H.264) and try again.")); }, 20000);
+    const cleanup = () => { clearTimeout(t); URL.revokeObjectURL(url); };
+    v.onerror = () => { cleanup(); reject(new Error("This browser can't read the video. Export it as MP4 (H.264) and try again.")); };
+    v.onloadedmetadata = () => { v.currentTime = Math.min(1, (v.duration || 2) / 2); };
+    v.onseeked = () => {
+      let thumbnail = null;
+      try {
+        const c = document.createElement("canvas"); c.width = 270; c.height = Math.round(270 * v.videoHeight / v.videoWidth) || 480;
+        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        thumbnail = c.toDataURL("image/jpeg", 0.7);
+      } catch (_) {}
+      const r = { width: v.videoWidth, height: v.videoHeight, duration: v.duration, thumbnail };
+      cleanup(); resolve(r);
+    };
+    v.src = url;
+  });
+}
+
+function check(file, m) {
+  if (!/\.(mp4|mov|m4v)$/i.test(file.name)) return "Please choose an MP4 or MOV file.";
+  if (file.size > MAX) return "File is larger than 150 MB. Export it at 1080p and try again.";
+  if (m.width > m.height) return `Video is horizontal (${m.width}x${m.height}). Shorts/Reels must be vertical (9:16) or square.`;
+  if (!(m.duration >= 3)) return "Video is too short. Minimum is 3 seconds.";
+  if (m.duration > 180) return `Video is too long (${Math.round(m.duration)}s). Maximum is 180 seconds.`;
+  return null;
+}
+
+$("file").addEventListener("change", async () => {
+  meta = null; $("info").textContent = "";
+  const file = $("file").files[0];
+  if (!file) return;
+  $("info").textContent = "Checking video…";
+  try {
+    const m = await readVideo(file);
+    const err = check(file, m);
+    if (err) { $("info").innerHTML = `<span class="err">${esc(err)}</span>`; return; }
+    meta = m;
+    $("info").textContent = `✓ ${m.width}x${m.height}, ${Math.round(m.duration)}s, ${(file.size / 1048576).toFixed(1)} MB`;
+  } catch (e) { $("info").innerHTML = `<span class="err">${esc(e.message)}</span>`; }
+});
+
+async function sendChunk(id, file, n, chunkSize) {
+  const blob = file.slice(n * chunkSize, Math.min(file.size, (n + 1) * chunkSize));
+  for (let attempt = 1; ; attempt++) {
+    const r = await api(`/api/videos/${id}/chunks/${n}`, { method: "PUT", body: blob });
+    if (r.ok) return;
+    if (r.status === 400 || r.status === 404 || attempt >= 6) throw new Error(r.data.error || "Upload failed. Please try again.");
+    await new Promise(res => setTimeout(res, 1000 * 2 ** attempt)); // wait and retry (Wi-Fi hiccup)
+  }
+}
+
+$("f").addEventListener("submit", async e => {
+  e.preventDefault();
+  const file = $("file").files[0];
+  const platforms = [$("yt").checked && "youtube", $("ig").checked && "instagram"].filter(Boolean);
+  if (!file) return flash("Choose a video file.", true);
+  if (!meta) return flash("Wait for the video check to finish (or fix the problem shown under the file).", true);
+  if (!platforms.length) return flash("Choose at least one platform.", true);
+  $("go").disabled = true; $("pb").style.display = "block"; $("pb").firstElementChild.style.width = "0";
+  const setMsg = t => $("msg").textContent = t;
+  try {
+    setMsg("Starting…");
+    const c = await api("/api/videos", { json: { title: $("title").value, description: $("desc").value, platforms,
+      fileName: file.name, size: file.size, width: meta.width, height: meta.height, duration: meta.duration, thumbnail: meta.thumbnail } });
+    if (!c.ok) throw new Error(c.data.error || "Could not start the upload.");
+    const { id, chunkSize, chunkCount } = c.data;
+    let done = 0, next = 0;
+    const worker = async () => {
+      while (next < chunkCount) {
+        const n = next++;
+        await sendChunk(id, file, n, chunkSize);
+        done++;
+        const pct = Math.round(done / chunkCount * 100);
+        $("pb").firstElementChild.style.width = pct + "%"; setMsg(`Uploading… ${pct}%`);
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    for (let i = 0; i < 3; i++) {
+      const f = await api(`/api/videos/${id}/complete`, { json: {} });
+      if (f.ok) { setMsg("Done! Going to the queue…"); location.href = "/?msg=" + encodeURIComponent("Video added to the queue."); return; }
+      if (f.status !== 409) throw new Error(f.data.error || "Could not finish the upload.");
+      for (const n of f.data.missing || []) await sendChunk(id, file, n, chunkSize);
+    }
+    throw new Error("Upload could not be completed. Please try again.");
+  } catch (err) {
+    flash(err.message, true); setMsg(""); $("pb").style.display = "none"; $("go").disabled = false;
+  }
+});
+
+requireUser();
+</script>
+</body>
+</html>

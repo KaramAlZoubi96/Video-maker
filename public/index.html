@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Queue · Shorts Autoposter</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js"></script>
+</head>
+<body class="hidden">
+<header>
+  <a class="brand" href="/">▶ Shorts Autoposter</a>
+  <nav>
+    <a href="/">Queue</a>
+    <a href="/upload.html">Upload</a>
+    <a href="/settings.html">Settings</a>
+    <button class="link" type="button" onclick="logout()">Log out (<span data-username></span>)</button>
+  </nav>
+</header>
+<main>
+  <div id="flash" class="flash hidden"></div>
+  <div id="problems"></div>
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+    <h1 style="margin:0">Queue</h1>
+    <a class="btn" href="/upload.html">+ Upload video</a>
+  </div>
+  <p class="muted" id="nextSlot"></p>
+  <div id="activeWrap" class="hidden"><h2>Posting now / needs attention</h2><div id="active"></div></div>
+  <h2>Waiting in queue (<span id="qcount">0</span>)</h2>
+  <div id="queued"></div>
+  <div id="doneWrap" class="hidden"><h2>Published</h2><div id="done"></div></div>
+</main>
+<script>
+let TZ = "UTC";
+const NAMES = { youtube: "YouTube", instagram: "Instagram" };
+
+function badges(v) {
+  let h = '<div class="badges">';
+  if (v.status === "uploading") h += '<span class="badge processing">⏳ Upload not finished</span>';
+  for (const [pl, p] of Object.entries(v.posts)) {
+    const n = NAMES[pl];
+    if (p.status === "published") h += `<span class="badge published">✓ ${n}${p.url ? ` · <a href="${esc(p.url)}" target="_blank" rel="noopener">open</a>` : ""}</span>`;
+    else if (p.status === "uploading") h += `<span class="badge uploading">↑ ${esc(p.note || n + " uploading…")}</span>`;
+    else if (p.status === "failed") h += `<span class="badge failed">✕ ${n} failed</span>`;
+    else h += `<span class="badge">${n} · ${esc(p.note || (v.releasedAt ? "waiting" : "queued"))}${p.nextAttemptAt && v.releasedAt ? " (next try " + fmtTime(p.nextAttemptAt, TZ) + ")" : ""}</span>`;
+  }
+  h += "</div>";
+  for (const [pl, p] of Object.entries(v.posts)) {
+    if (p.status === "failed") h += `<div class="actions"><span class="err">${NAMES[pl]}: ${esc(p.lastError)}</span><button class="ghost" onclick="act('${v.id}','retry/${pl}')">Retry</button></div>`;
+    else if (p.lastError && p.status === "pending") h += `<div class="muted small">Last problem: ${esc(p.lastError)}</div>`;
+  }
+  return h;
+}
+
+function card(v, opts = {}) {
+  const queued = opts.queued;
+  return `<div class="card video">
+    <img class="thumb" src="/api/thumb/${v.id}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'thumb'}))">
+    <div class="body">
+      <div class="title">${esc(v.title)}</div>
+      <div class="muted small">by ${esc(v.uploader)} · ${Math.round(v.duration)}s · added ${fmtTime(v.createdAt, TZ)}${v.releasedAt ? " · posting started " + fmtTime(v.releasedAt, TZ) : ""}</div>
+      ${badges(v)}
+      <div class="actions">
+        ${queued && v.status === "ready" ? `<button onclick="if(confirm('Post this video now?'))act('${v.id}','post-now')">Post now</button>` : ""}
+        ${queued ? `<button class="ghost" title="Move up" ${opts.first ? "disabled" : ""} onclick="act('${v.id}','move',{direction:-1})">↑</button>
+                    <button class="ghost" title="Move down" ${opts.last ? "disabled" : ""} onclick="act('${v.id}','move',{direction:1})">↓</button>` : ""}
+        <button class="danger" onclick="if(confirm('Remove this video from the website? (Already-published posts stay online.)'))act('${v.id}','delete')">Delete</button>
+      </div>
+      ${queued ? `<details><summary>Edit text</summary>
+        <form onsubmit="event.preventDefault();act('${v.id}','edit',{title:this.t.value,description:this.d.value})">
+          <label>Title</label><input name="t" type="text" maxlength="100" required value="${esc(v.title)}">
+          <label>Description / caption</label><textarea name="d" maxlength="2000">${esc(v.description)}</textarea>
+          <p><button type="submit">Save</button></p>
+        </form></details>` : ""}
+    </div></div>`;
+}
+
+async function act(id, action, data = {}) {
+  const r = await api(`/api/videos/${id}/${action}`, { json: data });
+  if (!r.ok) flash(r.data.error || "Something went wrong.", true);
+  else if (r.data.message) flash(r.data.message, false);
+  await load();
+}
+
+async function load() {
+  const r = await api("/api/dashboard");
+  if (!r.ok) return;
+  const d = r.data;
+  TZ = d.timezone;
+  document.getElementById("problems").innerHTML = d.problems.map(p => `<div class="banner">⚠ ${esc(p)} <a href="/settings.html">Fix in Settings</a></div>`).join("");
+  document.getElementById("nextSlot").innerHTML = d.nextSlot
+    ? `Next automatic post: <b>${fmtTime(d.nextSlot, TZ)}</b> — the top video in the queue goes out.`
+    : `No posting times set. Videos only post when you click “Post now”. <a href="/settings.html">Set times</a>`;
+  document.getElementById("qcount").textContent = d.queued.length;
+  document.getElementById("queued").innerHTML = d.queued.length
+    ? d.queued.map((v, i) => card(v, { queued: true, first: i === 0, last: i === d.queued.length - 1 })).join("")
+    : '<div class="card muted">The queue is empty. <a href="/upload.html">Upload a video</a>.</div>';
+  document.getElementById("activeWrap").classList.toggle("hidden", !d.active.length);
+  document.getElementById("active").innerHTML = d.active.map(v => card(v)).join("");
+  document.getElementById("doneWrap").classList.toggle("hidden", !d.done.length);
+  document.getElementById("done").innerHTML = d.done.map(v => card(v)).join("");
+  window.__busy = d.active.length > 0;
+}
+
+(async () => {
+  if (!(await requireUser())) return;
+  showUrlMessages();
+  await load();
+  // Refresh while something is posting (but not while you're editing text).
+  setInterval(() => { if (window.__busy && !document.querySelector("details[open]")) load(); }, 10000);
+})();
+</script>
+</body>
+</html>
