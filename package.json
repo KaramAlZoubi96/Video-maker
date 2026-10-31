@@ -1,0 +1,23 @@
+{
+  "name": "shorts-autoposter",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared website that posts your Shorts to YouTube and Instagram on a schedule (Netlify)",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "dev": "netlify dev"
+  },
+  "dependencies": {
+    "@netlify/blobs": "11.1.7",
+    "@netlify/functions": "6.0.3",
+    "bcryptjs": "^3.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.0"
+  },
+  "engines": { "node": ">=20" }
+}
