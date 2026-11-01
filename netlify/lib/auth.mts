@@ -92,7 +92,7 @@ export async function createUser(username: string, password: string): Promise<st
 
 export async function setPassword(username: string, password: string) {
   const hash = await bcrypt.hash(password, 10);
-  await update<User>(userKey(username), (u) => (u ? { ...u, hash } : undefined));
+  await update<User>(userKey(username), (u) => (u ? { ...u, hash, sessionVersion: (u.sessionVersion ?? 0) + 1 } : undefined));
 }
 
 /** 5 wrong passwords per username per 10 minutes. */
@@ -123,17 +123,19 @@ export async function authenticate(username: string, password: string): Promise<
 }
 
 export async function sessionCookie(req: Request, username: string): Promise<string> {
-  const token = await sign({ u: username, exp: Date.now() + SESSION_DAYS * 86400_000 });
+  const user = await getJSON<User>(userKey(username));
+  const token = await sign({ u: username, v: user?.sessionVersion ?? 0, exp: Date.now() + SESSION_DAYS * 86400_000 });
   return cookieHeader(req, COOKIE, token, SESSION_DAYS * 86400);
 }
 
 export const clearSessionCookie = (req: Request) => cookieHeader(req, COOKIE, "", 0);
 
 export async function currentUser(req: Request): Promise<string | null> {
-  const s = await verify<{ u: string }>(getCookie(req, COOKIE));
+  const s = await verify<{ u: string; v?: number }>(getCookie(req, COOKIE));
   if (!s) return null;
   const user = await getJSON<User>(userKey(s.u));
-  return user ? user.username : null;
+  if (!user || (s.v ?? 0) !== (user.sessionVersion ?? 0)) return null;
+  return user.username;
 }
 
 /** Blocks other websites from sending actions in your name. */

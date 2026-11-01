@@ -15,6 +15,9 @@ const RUPLOAD = "https://rupload.facebook.com/ig-api-upload";
 const PROCESSING_TIMEOUT_MS = 30 * 60 * 1000;
 /** Minimum time left in this run to start the file upload. */
 export const IG_UPLOAD_MIN_MS = 15000;
+/** The scheduler's budget ends at `deadline`; Netlify stops the function about 8 s later. */
+const HARD_STOP_AFTER_DEADLINE_MS = 6000;
+const MAX_UPLOAD_TRIES = 3;
 
 export function cleanCaption(text: string): string {
   let tags = 0;
@@ -143,9 +146,21 @@ export class InstagramUploader {
       return { done: false, note: "Instagram is processing the video…" };
     }
 
-    // Fresh start (or the app stopped during the byte upload: start a new container,
-    // the old unpublished one simply expires).
+    // Fresh start. If an earlier run was stopped during the byte upload (the function hit
+    // Netlify's time limit), start a new container (the old unpublished one simply expires),
+    // but give up after a few tries so the post can never stay stuck.
+    const tries = r.step === "uploading" ? ((ctx.resume as any).uploadTries ?? 1) + 1 : 1;
+    if (tries > MAX_UPLOAD_TRIES) {
+      await ctx.saveResume({});
+      throw new PermanentError("This video is too big to send to Instagram in time. Export a smaller file (1080p, under about 80 MB) and upload it again.");
+    }
     if (ctx.deadline - Date.now() < IG_UPLOAD_MIN_MS) {
+      return { done: false, note: "Waiting for the next run to upload to Instagram…" };
+    }
+    // Read the file first, then make sure enough time is left before talking to Instagram.
+    const bytes = await ctx.readRange(0, ctx.video.size);
+    const hardStop = ctx.deadline + HARD_STOP_AFTER_DEADLINE_MS;
+    if (hardStop - Date.now() < IG_UPLOAD_MIN_MS) {
       return { done: false, note: "Waiting for the next run to upload to Instagram…" };
     }
     await this.checkLimit(ctx);
@@ -154,10 +169,10 @@ export class InstagramUploader {
     });
     if (!created.id) throw new TransientError("Instagram did not return a container id.");
     const containerId: string = created.id;
-    await ctx.saveResume({ containerId, step: "uploading" });
+    await ctx.saveResume({ containerId, step: "uploading", uploadTries: tries });
 
-    const bytes = await ctx.readRange(0, ctx.video.size);
-    const timeLeft = Math.max(ctx.deadline - Date.now() + 5000, 10000);
+    const timeLeft = hardStop - Date.now();
+    if (timeLeft < 3000) throw new TransientError("Not enough time left to upload to Instagram; will try again.");
     await this.req(ctx, `${RUPLOAD}/${this.v}/${containerId}`, {
       method: "POST",
       headers: {

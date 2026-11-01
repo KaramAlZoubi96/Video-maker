@@ -78,13 +78,18 @@ function accountRow(page, key, a) {
   else status = `<span class="err">⚠ ${esc(a.error)}</span>`;
   let actions = "";
   if (canOAuth) actions += `<a class="btn ${a ? "ghost" : ""}" href="/api/connect/${page.id}/${key}">${a ? "Reconnect" : "Connect"}</a>`;
-  if (a) actions += `<button class="danger" onclick="if(confirm('Disconnect ${name} from ${esc(page.name)}?'))post('/api/disconnect/${page.id}/${key}',{}).then(load)">Disconnect</button>`;
+  if (a) actions += `<button class="danger" data-page="${page.id}" data-key="${key}" data-label="${esc(name + " from " + page.name)}" onclick="disconnectAccount(this)">Disconnect</button>`;
   let extra = "";
   if (key === "youtube" && !S.youtubeConfigured) extra = `<div class="err small" style="width:100%">Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Netlify environment variables, then redeploy.</div>`;
   if (key === "instagram") extra = `<details style="width:100%" ${!a && !canOAuth ? "open" : ""}><summary class="muted small">Paste an access token instead</summary>
       <form onsubmit="event.preventDefault();post('/api/connect/${page.id}/instagram/token',{token:this.tok.value}).then(load)">
         <input name="tok" type="password" placeholder="IGAA…" required style="margin-top:8px"><p><button type="submit">Save token</button></p></form></details>`;
   return `<div class="acc"><div><div class="small muted">${name}</div>${status}</div><div class="actions">${actions}</div>${extra}</div>`;
+}
+
+function disconnectAccount(btn) {
+  // Names come from data- attributes, never from code, so any page name is safe.
+  if (confirm("Disconnect " + btn.dataset.label + "?")) post(`/api/disconnect/${btn.dataset.page}/${btn.dataset.key}`, {}).then(load);
 }
 
 function pageCard(p, i) {

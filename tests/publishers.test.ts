@@ -101,6 +101,22 @@ describe("YouTube", () => {
       .rejects.toBeInstanceOf(TransientError);
   });
 
+  it("session that died mid-upload is cleared so the next try starts fresh", async () => {
+    const f = fakeFetch((req) => req.headers.get("Content-Range") === "bytes */100"
+      ? new Response(null, { status: 308, headers: { Range: "bytes=0-9" } })
+      : new Response(null, { status: 404 }));
+    const { c, saved } = ctx(f, { resume: { session: "https://up/dead", needsQuery: true } });
+    await expect(yt().step(c, noop)).rejects.toBeInstanceOf(TransientError);
+    expect(saved.at(-1)).toEqual({});
+  });
+
+  it("short rate limit waits minutes, not until tomorrow", async () => {
+    const f = fakeFetch(() => Response.json({ error: { message: "slow", errors: [{ reason: "rateLimitExceeded" }] } }, { status: 403 }));
+    const err = await yt().step(ctx(f).c, noop).catch((e) => e);
+    expect(err).toBeInstanceOf(DeferError);
+    expect(err.until.getTime() - Date.now()).toBeLessThan(20 * 60_000);
+  });
+
   it("expired session starts a new one", async () => {
     let posts = 0;
     const f = fakeFetch((req) => {
@@ -173,6 +189,19 @@ describe("Instagram", () => {
     const r = await ig().step(ctx(fake.fetch, { deadlineMs: 2000 }).c);
     expect(r.done).toBe(false);
     expect(fake.created).toBe(0);
+  });
+
+  it("an upload that keeps getting cut off gives up instead of looping forever", async () => {
+    const fake = new FakeIG();
+    // three earlier runs were stopped mid-upload
+    const { c } = ctx(fake.fetch, { resume: { containerId: "C0", step: "uploading", uploadTries: 3 } });
+    await expect(ig().step(c)).rejects.toThrow(/too big to send to Instagram/);
+    expect(fake.created).toBe(0);
+    const fake2 = new FakeIG(["IN_PROGRESS"]);
+    const second = ctx(fake2.fetch, { resume: { containerId: "C0", step: "uploading", uploadTries: 1 } });
+    await ig().step(second.c);
+    expect(fake2.created).toBe(1);
+    expect(second.c.resume.step).toBe("processing");
   });
 
   it("daily post limit waits", async () => {

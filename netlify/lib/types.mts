@@ -58,6 +58,8 @@ export interface Video {
   /** Which page this video belongs to (older videos without it belong to p1). */
   pageId?: PageId;
   credit?: Credit | null;
+  /** Set first when deleting, so the scheduler stops touching it. */
+  deleted?: boolean;
   posts: Partial<Record<Platform, Post>>;
 }
 
@@ -108,6 +110,8 @@ export const DEFAULT_SETTINGS: Settings = {
 export interface User {
   username: string;
   hash: string;
+  /** Goes up when the password changes; older login cookies stop working. */
+  sessionVersion?: number;
   createdAt: string;
 }
 

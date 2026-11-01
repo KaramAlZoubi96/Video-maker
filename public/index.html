@@ -119,6 +119,7 @@ function render() {
       <div class="muted small" style="margin-top:8px">${p.lastStatsRun ? "Updated " + fmtDate(p.lastStatsRun, TZ) + " · " : ""}<button class="link" onclick="refreshStats()">Update now</button></div></div>`;
   }
   document.getElementById("page").innerHTML = next + stats
+    + section("Unfinished uploads (upload again, or delete)", p.unfinished || [], "unfinished")
     + section("Posting now", p.active, "active")
     + section(`Up next (${p.queued.length})`, p.queued, "queued", `No videos waiting for ${esc(p.name)}. <a href="/upload.html?page=${p.id}">Upload one</a>`)
     + section(`Posted (${p.publishedCount})`, p.done, "done");

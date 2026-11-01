@@ -225,6 +225,16 @@ describe("posting", () => {
     }
   });
 
+  it("a video deleted while the scheduler works is never posted", async () => {
+    const v = await addVideo({ platforms: ["youtube"] });
+    await q.releaseVideo(v.id);
+    const listed = (await q.getVideo(v.id))!;
+    await q.updateVideo(v.id, (x) => { x.deleted = true; return true; }); // user deletes
+    const { ups, calls } = fakeUploaders({ youtube: [ok("y")] });
+    await q.stepPost(listed, "youtube", Date.now() + 20000, ups, fetch);
+    expect(calls.length).toBe(0);
+  });
+
   it("unexpected bugs never leave a post stuck", async () => {
     const v = await addVideo({ platforms: ["youtube"] });
     await q.releaseVideo(v.id);

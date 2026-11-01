@@ -91,7 +91,8 @@ route("GET", "/api/dashboard", async () => {
   const problems: string[] = [];
   for (const id of PAGE_IDS) {
     const mine = all.filter((v) => q.pageOf(v) === id);
-    const queued = mine.filter((v) => !v.releasedAt).sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
+    const unfinished = mine.filter((v) => !v.releasedAt && v.status !== "ready");
+    const queued = mine.filter((v) => !v.releasedAt && v.status === "ready").sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
     const released = mine.filter((v) => v.releasedAt);
     const isDone = (v: Video) => Object.values(v.posts).every((p) => p?.status === "published");
     const done = released.filter(isDone).sort((a, b) => (b.releasedAt ?? "").localeCompare(a.releasedAt ?? ""));
@@ -109,6 +110,7 @@ route("GET", "/api/dashboard", async () => {
         likes: sum("youtube", "likes") + sum("instagram", "likes") + old.likes },
       bestTimes: bestTimes(done, s.timezone, old.byHour), lastStatsRun: s.lastStatsRun ?? null,
       queued: queued.map(publicVideo), active: active.map(publicVideo), done: done.slice(0, 30).map(publicVideo),
+      unfinished: unfinished.map(publicVideo),
     });
   }
   return json({ pages, timezone: s.timezone, problems });
@@ -221,9 +223,8 @@ route("POST", "/api/videos/([a-z0-9]+)/edit", async (req, m) => {
 route("POST", "/api/videos/([a-z0-9]+)/delete", async (_req, m) => {
   const v = await q.getVideo(m[1]);
   if (!v) return json({ ok: true });
-  if (Object.values(v.posts).some((p) => p?.status === "uploading")) {
-    return fail("This video is uploading right now. Try again in a few minutes.");
-  }
+  // Step 1: mark it deleted (the scheduler checks this before every step). Step 2: remove it.
+  await q.updateVideo(v.id, (x) => { x.deleted = true; return true; });
   await kv().delete(q.videoKey(v.id));
   await q.deleteVideoFiles(v.id);
   await kv().delete(q.thumbKey(v.id));
@@ -299,6 +300,8 @@ route("POST", "/api/settings", async (req) => {
   if (!isValidTimeZone(String(b.timezone))) return fail("Unknown timezone.");
   const privacy = ["public", "unlisted", "private"].includes(b.youtubePrivacy) ? b.youtubePrivacy : "public";
   await q.updateSettings((s) => {
+    // Times that already passed today in the new timezone are not "missed".
+    if (s.timezone !== String(b.timezone)) for (const id of PAGE_IDS) s.pages[id].lastSlotRun = new Date().toISOString();
     s.timezone = String(b.timezone);
     s.youtubePrivacy = privacy;
     s.addShortsTag = Boolean(b.addShortsTag);
@@ -321,7 +324,10 @@ route("POST", "/api/pages/(p1|p2)", async (req, m) => {
   if (hashtags.length > 500) return fail("Saved hashtags are too long (max 500 characters).");
   if (countTags(hashtags) > 20) return fail("Keep saved hashtags to 20 or fewer (Instagram allows 30 per post in total).");
   await q.updateSettings((s) => {
+    const timesChanged = s.pages[id].slots.join() !== slots.join();
     s.pages[id] = { ...s.pages[id], name, slots, hashtags, needsCredit: Boolean(b.needsCredit) };
+    // New times start counting from now, so a time earlier today doesn't post right away.
+    if (timesChanged) s.pages[id].lastSlotRun = new Date().toISOString();
   });
   return json({ ok: true, message: `"${name}" saved.` + (slots.length ? "" : " No times set: this page only posts with 'Post now'.") });
 });
@@ -340,7 +346,8 @@ route("POST", "/api/password", async (req, _m, user) => {
   const err = auth.validateNewUser(user, String(b.new ?? ""));
   if (err) return fail(err);
   await auth.setPassword(user, String(b.new));
-  return json({ ok: true, message: "Password changed." });
+  // Other devices are logged out; this one gets a fresh login.
+  return json({ ok: true, message: "Password changed. Other devices are logged out." }, 200, { "Set-Cookie": await auth.sessionCookie(req, user) });
 });
 
 route("POST", "/api/stats/refresh", async () => {

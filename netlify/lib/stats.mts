@@ -24,7 +24,7 @@ export async function youtubeStats(page: PageId, ids: string[], f: typeof fetch)
   for (let i = 0; i < ids.length; i += 50) {
     const batch = ids.slice(i, i + 50);
     const resp = await f(`https://www.googleapis.com/youtube/v3/videos?part=statistics&id=${batch.join(",")}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(8000),
     });
     if (!resp.ok) throw new Error(`YouTube stats error ${resp.status}`);
     const data: any = await resp.json();
@@ -42,11 +42,11 @@ export async function instagramStats(page: PageId, mediaId: string, f: typeof fe
   const acc = await tokens.getAccount(page, "instagram");
   if (!acc?.accessToken) return null;
   const base = `https://graph.instagram.com/${config.igApiVersion()}/${mediaId}`;
-  const r = await f(`${base}?${new URLSearchParams({ fields: "like_count,comments_count", access_token: acc.accessToken })}`);
+  const r = await f(`${base}?${new URLSearchParams({ fields: "like_count,comments_count", access_token: acc.accessToken })}`, { signal: AbortSignal.timeout(8000) });
   if (!r.ok) return null;
   const d: any = await r.json();
   const stats: PostStats = { views: null, likes: num(d.like_count), comments: num(d.comments_count), updatedAt: new Date().toISOString() };
-  const ins = await f(`${base}/insights?${new URLSearchParams({ metric: "views", access_token: acc.accessToken })}`);
+  const ins = await f(`${base}/insights?${new URLSearchParams({ metric: "views", access_token: acc.accessToken })}`, { signal: AbortSignal.timeout(8000) });
   if (ins.ok) {
     const j: any = await ins.json();
     const v = (j.data ?? []).find((m: any) => m.name === "views");

@@ -141,7 +141,7 @@ export async function releaseVideo(id: string, now = new Date()): Promise<boolea
 /** Release the top video of a page's queue. Held (not failed) if an account it needs is disconnected. */
 export async function releaseNextVideo(page: PageId, now = new Date()): Promise<string | null> {
   const queue = (await listVideos())
-    .filter((v) => pageOf(v) === page && v.status === "ready" && !v.releasedAt && Object.values(v.posts).some((p) => p?.status === "pending"))
+    .filter((v) => pageOf(v) === page && v.status === "ready" && !v.releasedAt && !v.deleted && Object.values(v.posts).some((p) => p?.status === "pending"))
     .sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
   const top = queue[0];
   if (!top) return null;
@@ -229,7 +229,10 @@ function isDue(p: Post | undefined, now: number) {
 }
 
 /** Do one step of one post. Never throws. */
-export async function stepPost(v: Video, platform: Platform, deadline: number, ups: Uploaders, f: typeof fetch): Promise<void> {
+export async function stepPost(listed: Video, platform: Platform, deadline: number, ups: Uploaders, f: typeof fetch): Promise<void> {
+  // Re-read: the video may have been deleted or changed since the list was made.
+  const v = await getVideo(listed.id);
+  if (!v || v.deleted || !v.releasedAt || !isDue(v.posts[platform], Date.now())) return;
   const post = v.posts[platform]!;
   const settings = await getSettings();
   const now = Date.now();
@@ -308,7 +311,7 @@ export async function runDuePosts(deadline: number, ups: Uploaders = realUploade
     const now = Date.now();
     const work: { v: Video; p: Platform; igUpload: boolean }[] = [];
     for (const v of await listVideos()) {
-      if (v.status !== "ready" || !v.releasedAt) continue;
+      if (v.status !== "ready" || !v.releasedAt || v.deleted) continue;
       for (const p of PLATFORMS) {
         const post = v.posts[p];
         if (!isDue(post, now) || done.has(`${v.id}/${p}`)) continue;

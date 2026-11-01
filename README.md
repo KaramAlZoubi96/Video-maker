@@ -44,7 +44,7 @@ scripts/local-server.mts   run the site on your computer for testing
 ## For developers
 ```bash
 npm install
-npm test            # 56 tests
+npm test            # 65 tests
 npm run typecheck
 # Try it locally with fake YouTube/Instagram (no accounts needed), then open http://localhost:8888
 MOCK_PLATFORMS=1 GOOGLE_CLIENT_ID=x GOOGLE_CLIENT_SECRET=x node --experimental-strip-types scripts/local-server.mts

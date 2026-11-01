@@ -11,7 +11,9 @@ import {
 } from "./types.mts";
 
 const UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos";
-const QUOTA_REASONS = new Set(["quotaExceeded", "uploadLimitExceeded", "dailyLimitExceeded", "rateLimitExceeded"]);
+const QUOTA_REASONS = new Set(["quotaExceeded", "uploadLimitExceeded", "dailyLimitExceeded"]);
+/** Short "slow down" limits: wait a few minutes, not until tomorrow. */
+const SHORT_LIMIT_REASONS = new Set(["rateLimitExceeded", "userRateLimitExceeded"]);
 
 export const cleanTitle = (t: string) => (t.replace(/[<>]/g, "").trim() || "Short").slice(0, 100);
 
@@ -34,6 +36,9 @@ export async function checkYouTube(resp: Response): Promise<void> {
   const { msg, reasons } = await errorText(resp);
   if (resp.status === 403 && reasons.some((r: string) => QUOTA_REASONS.has(r))) {
     throw new DeferError("YouTube daily limit reached - will continue after it resets.", nextQuotaReset());
+  }
+  if (reasons.some((r: string) => SHORT_LIMIT_REASONS.has(r))) {
+    throw new DeferError("YouTube asked us to slow down - trying again in 15 minutes.", new Date(Date.now() + 15 * 60_000));
   }
   if (resp.status === 403 && reasons.some((r: string) => r === "forbidden" || r === "insufficientPermissions")) {
     throw new AuthError("YouTube refused access. Reconnect YouTube in Settings.");
@@ -145,6 +150,10 @@ export class YouTubeUploader {
         throw e;
       }
       if (resp.status === 200 || resp.status === 201) return this.finished(resp);
+      if (resp.status === 404 || resp.status === 410) {
+        await ctx.saveResume({});
+        throw new TransientError("YouTube upload session expired; will start the upload again.");
+      }
       if (resp.status === 308) {
         const next = rangeEnd(resp);
         if (next <= start && ++stalls > 3) {

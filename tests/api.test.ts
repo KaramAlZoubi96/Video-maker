@@ -214,6 +214,23 @@ describe("settings & accounts", () => {
     expect(await tokens.getAccount("p2", "youtube")).toBeNull();
   });
 
+  it("changing the password logs out other devices but not this one", async () => {
+    const b = await loggedIn();
+    const other = new Browser();
+    await other.call("POST", "/api/login", { username: "alice", password: "password123" });
+    expect((await other.call("GET", "/api/dashboard")).status).toBe(200);
+    expect((await b.call("POST", "/api/password", { current: "password123", new: "brandnew123" })).status).toBe(200);
+    expect((await other.call("GET", "/api/dashboard")).status).toBe(401);
+    expect((await b.call("GET", "/api/dashboard")).status).toBe(200);
+  });
+
+  it("changing posting times doesn't post right away", async () => {
+    const b = await loggedIn();
+    await q.updateSettings((s) => { s.pages.p1.lastSlotRun = "2020-01-01T00:00:00.000Z"; });
+    await b.call("POST", "/api/pages/p1", { name: "Reddit Stories", slots: "00:01, 23:59", needsCredit: true });
+    expect(Date.now() - Date.parse((await q.getSettings()).pages.p1.lastSlotRun!)).toBeLessThan(5000);
+  });
+
   it("change password", async () => {
     const b = await loggedIn();
     expect((await b.call("POST", "/api/password", { current: "nope-nope", new: "newpassword1" })).json.error).toMatch(/wrong/);
