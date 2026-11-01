@@ -1,0 +1,43 @@
+# Shorts HQ — notes for Claude
+
+Private website for two creators (owner: KaramAlZoubi96 + a friend). They upload vertical videos; the site
+posts them to YouTube Shorts and Instagram Reels at set times. The owner is not technical and prefers short,
+simple English. Do the work end to end and report plainly what changed.
+
+## How updates go live
+- Hosting: **Netlify**, deployed from this GitHub repo, branch `main`.
+- Netlify runs `npm test` before every deploy (see `netlify.toml`). If tests fail, the live site stays as it was.
+- So: make the change → `npm test` passes → commit → push to `main`. No zips, no manual uploads.
+- `deploy.bat` / `deploy.command` are a backup for deploying from the owner's PC with the Netlify CLI.
+
+## The product
+- 2 pages: `p1` "Reddit Stories" and `p2` "Dreamcore". Each page has its own YouTube channel, Instagram
+  account, daily posting times, saved hashtags. Reddit Stories requires story link + author + permission
+  (credit is added to captions).
+- Queue per page; at each slot the top video is released; "Post now" releases immediately.
+- Views/likes refreshed every 3 h for 30 days; videos finished >35 days ago are archived and their numbers
+  kept in `pagestats/{page}`.
+
+## Code map
+- `netlify/functions/api.mts` → `netlify/lib/api.mts` (all `/api/*` routes)
+- `netlify/functions/scheduler.mts` (cron every minute, ~22 s budget, hard limit 30 s) → `netlify/lib/queue.mts`
+- `netlify/lib/youtube.mts` (resumable upload, a few 4 MiB pieces per run), `instagram.mts` (container →
+  rupload → poll → publish; checks `PUBLISHED` before publishing again), `tokens.mts` (OAuth + refresh per page),
+  `stats.mts`, `auth.mts` (bcrypt + HMAC cookie, origin check), `store.mts` (Netlify Blobs, ETag-safe `update()`),
+  `time.mts` (slots in the user's timezone), `types.mts` (data model + limits).
+- Frontend: plain HTML/JS in `public/`; shared helpers + layout in `public/app.js`; all colors in the THEME block
+  at the top of `public/style.css` (current design: "Dark"; the owner may ask to switch to "Clean" or "Playful").
+
+## Rules that prevent the mistakes this project exists to avoid
+- Never post twice: every platform post has its own state; save resume info before each risky step.
+- Never leave a post stuck in `uploading`; temporary errors retry (5/20/60/180 min), limits defer, rejections fail
+  with a readable reason.
+- Respect Netlify limits: request body ≤ ~6 MB (uploads are chunked), function time ≤ 30 s (work in steps).
+- Data written by both the website and the scheduler must go through `update()` / `updateVideo()` (ETag checks).
+- Keep secrets out of the repo (they live in Netlify environment variables). This repo is public.
+
+## Testing
+- `npm test` (vitest, in-memory store, mocked APIs) and `npm run typecheck`.
+- Browser testing without real accounts:
+  `MOCK_PLATFORMS=1 GOOGLE_CLIENT_ID=x GOOGLE_CLIENT_SECRET=x node --experimental-strip-types scripts/local-server.mts`
+  then open http://localhost:8888 (fake YouTube/Instagram answer every call).

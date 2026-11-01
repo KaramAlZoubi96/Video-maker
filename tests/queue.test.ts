@@ -296,6 +296,30 @@ describe("views & likes", () => {
   });
 });
 
+describe("archive", () => {
+  it("moves videos finished over 35 days ago out of the live list, keeping their numbers", async () => {
+    const old = new Date(Date.now() - 40 * 86400_000).toISOString();
+    const v = await addVideo({ releasedAt: "2026-05-01T19:00:10Z" } as any);
+    await q.updateVideo(v.id, (x) => {
+      x.posts = {
+        youtube: { status: "published", publishedAt: old, remoteId: "Y", attempts: 0, resume: {}, stats: { views: 500, likes: 20, comments: 0, updatedAt: old } },
+        instagram: { status: "published", publishedAt: old, remoteId: "I", attempts: 0, resume: {}, stats: { views: 300, likes: 10, comments: 0, updatedAt: old } },
+      } as any;
+      return true;
+    });
+    await q.maintenance(Date.now(), fetch);
+    expect(await q.getVideo(v.id)).toBeNull();
+    expect(await kv().getJSON(`archive/${v.id}`)).not.toBeNull();
+    expect(await kv().list(`chunks/${v.id}/`)).toEqual([]);
+    const a = await q.getArchivedStats("p1");
+    expect(a).toMatchObject({ count: 1, youtubeViews: 500, instagramViews: 300, likes: 30, byHour: { "19:00": { videos: 1, views: 800 } } });
+    // archiving the same video again never double counts
+    await q.archiveVideo((await kv().getJSON<any>(`archive/${v.id}`))!.data, "UTC");
+    expect((await q.getArchivedStats("p1")).count).toBe(1);
+    expect(bestTimes([], "UTC", a.byHour)).toEqual([{ time: "19:00", videos: 1, avgViews: 800 }]);
+  });
+});
+
 describe("storage", () => {
   it("reads byte ranges across chunks", async () => {
     const bytes = new Uint8Array(25).map((_, i) => i);

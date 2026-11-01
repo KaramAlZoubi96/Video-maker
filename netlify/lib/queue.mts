@@ -27,6 +27,23 @@ const DAY = 86400_000;
 export const videoKey = (id: string) => `videos/${id}`;
 export const chunkKey = (id: string, n: number) => `chunks/${id}/${String(n).padStart(5, "0")}`;
 export const thumbKey = (id: string) => `thumbs/${id}`;
+export const archiveKey = (id: string) => `archive/${id}`;
+export const pageStatsKey = (page: PageId) => `pagestats/${page}`;
+
+/** Numbers of old videos that were moved to the archive (so the queue stays fast). */
+export interface ArchivedStats {
+  count: number;
+  youtubeViews: number;
+  instagramViews: number;
+  likes: number;
+  byHour: Record<string, { videos: number; views: number }>;
+}
+export const emptyArchivedStats = (): ArchivedStats => ({ count: 0, youtubeViews: 0, instagramViews: 0, likes: 0, byHour: {} });
+export async function getArchivedStats(page: PageId): Promise<ArchivedStats> {
+  return (await getJSON<ArchivedStats>(pageStatsKey(page))) ?? emptyArchivedStats();
+}
+
+const ARCHIVE_AFTER_MS = 35 * 86400_000;
 
 // ---- settings ---------------------------------------------------------------
 /** Fill in defaults, and move old single-page settings into page 1. */
@@ -329,7 +346,7 @@ export async function withLock<T>(name: string, ttlMs: number, fn: () => Promise
 }
 
 /** Daily: renew logins, delete files of videos published a week ago, drop abandoned uploads. */
-export async function maintenance(now = Date.now(), f: typeof fetch = fetch) {
+export async function maintenance(now = Date.now(), f: typeof fetch = fetch, deadline = Infinity) {
   const s = await getSettings();
   if (s.lastMaintenance && now - Date.parse(s.lastMaintenance) < DAY / 4) return;
   await updateSettings((x) => { x.lastMaintenance = new Date(now).toISOString(); });
@@ -346,9 +363,14 @@ export async function maintenance(now = Date.now(), f: typeof fetch = fetch) {
     }
   }
   for (const v of await listVideos()) {
+    if (Date.now() > deadline) break; // the rest waits for the next run
     const posts = Object.values(v.posts);
     const allPublished = posts.length > 0 && posts.every((p) => p?.status === "published");
     const lastPub = Math.max(...posts.map((p) => Date.parse(p?.publishedAt ?? "") || 0));
+    if (allPublished && now - lastPub > ARCHIVE_AFTER_MS) {
+      await archiveVideo(v, s.timezone);
+      continue;
+    }
     if (allPublished && !v.filesDeleted && now - lastPub > 7 * DAY) {
       await deleteVideoFiles(v.id);
       await updateVideo(v.id, (x) => { x.filesDeleted = true; return true; });
@@ -361,16 +383,49 @@ export async function maintenance(now = Date.now(), f: typeof fetch = fetch) {
   }
 }
 
+/**
+ * Move a long-finished video out of the live list. Its numbers are added to the
+ * page's totals first, so stats and "best times" keep counting it.
+ */
+export async function archiveVideo(v: Video, timezone: string) {
+  const page = pageOf(v);
+  const views = (pl: Platform) => v.posts[pl]?.stats?.views ?? 0;
+  const likes = Object.values(v.posts).reduce((n, p) => n + (p?.stats?.likes ?? 0), 0);
+  const hasViews = Object.values(v.posts).some((p) => p?.stats?.views != null);
+  // Mark first so a crash in between can never count the same video twice.
+  if (!(await kv().setJSON(archiveKey(v.id), v, { onlyIfNew: true }))) {
+    await kv().delete(videoKey(v.id));
+    return;
+  }
+  await update<ArchivedStats>(pageStatsKey(page), (cur) => {
+    const a = cur ?? emptyArchivedStats();
+    a.count++;
+    a.youtubeViews += views("youtube");
+    a.instagramViews += views("instagram");
+    a.likes += likes;
+    if (hasViews && v.releasedAt) {
+      const hour = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, hour: "2-digit", hourCycle: "h23" }).format(new Date(v.releasedAt));
+      const g = (a.byHour[`${hour}:00`] ??= { videos: 0, views: 0 });
+      g.videos++;
+      g.views += views("youtube") + views("instagram");
+    }
+    return a;
+  });
+  await deleteVideoFiles(v.id);
+  await kv().delete(thumbKey(v.id));
+  await kv().delete(videoKey(v.id));
+}
+
 /** One scheduler run. */
 export async function runScheduler(budgetMs = 22000, ups: Uploaders = realUploaders, f: typeof fetch = fetch) {
   const deadline = Date.now() + budgetMs;
   return withLock("scheduler", budgetMs + 60_000, async () => {
     await checkSlots();
     const steps = await runDuePosts(deadline, ups, f);
-    if (Date.now() < deadline - 3000) await maintenance(Date.now(), f);
+    if (Date.now() < deadline - 3000) await maintenance(Date.now(), f, deadline);
     if (Date.now() < deadline - 3000) {
       try {
-        await refreshStats(Date.now(), f);
+        await refreshStats(Date.now(), f, false, deadline);
       } catch (e) {
         console.warn("Stats refresh failed", e);
       }

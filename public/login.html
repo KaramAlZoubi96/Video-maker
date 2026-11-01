@@ -37,7 +37,8 @@
   document.getElementById("f").addEventListener("submit", async e => {
     e.preventDefault();
     const go = document.getElementById("go"); go.disabled = true;
-    const r = await api(setup ? "/api/setup" : "/api/login", { json: { username: document.getElementById("u").value, password: document.getElementById("p").value } });
+    const r = await api(setup ? "/api/setup" : "/api/login", { json: { username: document.getElementById("u").value, password: document.getElementById("p").value,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone } });
     go.disabled = false;
     if (r.ok) location.href = setup ? "/settings.html?msg=" + encodeURIComponent("Account created. Next: connect YouTube and Instagram.") : "/";
     else flash(r.data.error || "Something went wrong.", true);

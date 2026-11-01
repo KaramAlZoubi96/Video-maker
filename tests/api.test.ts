@@ -29,9 +29,9 @@ class Browser {
   }
 }
 
-async function loggedIn(name = "alice") {
+async function loggedIn(name = "alice", timezone?: string) {
   const b = new Browser();
-  const r = await b.call("POST", "/api/setup", { username: name, password: "password123" });
+  const r = await b.call("POST", "/api/setup", { username: name, password: "password123", timezone });
   expect(r.status).toBe(200);
   return b;
 }
@@ -150,12 +150,24 @@ describe("upload", () => {
     expect((await q.getVideo(c.json.id))!.releasedAt).toBeTruthy();
   });
 
+  it("asks before uploading the same video twice", async () => {
+    const b = await loggedIn();
+    const c1 = await b.call("POST", "/api/videos", { ...meta, size: 100 });
+    await b.call("PUT", `/api/videos/${c1.json.id}/chunks/0`, undefined, { body: mp4Bytes(100) });
+    await b.call("POST", `/api/videos/${c1.json.id}/complete`, {});
+    const again = await b.call("POST", "/api/videos", { ...meta, size: 100 });
+    expect(again.status).toBe(409);
+    expect(again.json.duplicate).toBe(true);
+    expect((await b.call("POST", "/api/videos", { ...meta, size: 100, allowDuplicate: true })).status).toBe(200);
+    expect((await b.call("POST", "/api/videos", { ...meta, size: 100, pageId: "p2" })).status).toBe(200); // other page is fine
+  });
+
   it("move, edit, delete", async () => {
     const b = await loggedIn();
     const ids: string[] = [];
-    for (const t of ["one", "two"]) {
-      const c = await b.call("POST", "/api/videos", { ...meta, title: t, size: 100 });
-      await b.call("PUT", `/api/videos/${c.json.id}/chunks/0`, undefined, { body: mp4Bytes(100) });
+    for (const [t, size] of [["one", 100], ["two", 120]] as const) {
+      const c = await b.call("POST", "/api/videos", { ...meta, title: t, size });
+      await b.call("PUT", `/api/videos/${c.json.id}/chunks/0`, undefined, { body: mp4Bytes(size) });
       await b.call("POST", `/api/videos/${c.json.id}/complete`, {});
       ids.push(c.json.id);
     }
@@ -170,6 +182,11 @@ describe("upload", () => {
 });
 
 describe("settings & accounts", () => {
+  it("first account sets the timezone from the browser", async () => {
+    await loggedIn("alice", "Asia/Amman");
+    expect((await q.getSettings()).timezone).toBe("Asia/Amman");
+  });
+
   it("saves schedule and rejects bad times", async () => {
     const b = await loggedIn();
     expect((await b.call("POST", "/api/settings", { timezone: "Asia/Jerusalem", youtubePrivacy: "unlisted", addShortsTag: false })).status).toBe(200);

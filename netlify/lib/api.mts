@@ -101,12 +101,13 @@ route("GET", "/api/dashboard", async () => {
     for (const p of PLATFORMS) accounts[p] = (await tokens.getAccount(id, p))?.displayName ?? null;
     problems.push(...(await tokens.accountProblems(id, s.pages[id].name)));
     const sum = (pl: "youtube" | "instagram", k: "views" | "likes") => done.reduce((n, v) => n + (v.posts[pl]?.stats?.[k] ?? 0), 0);
+    const old = await q.getArchivedStats(id);
     pages.push({
-      id, name: s.pages[id].name, nextSlot: next?.toISOString() ?? null, accounts, publishedCount: done.length,
+      id, name: s.pages[id].name, nextSlot: next?.toISOString() ?? null, accounts, publishedCount: done.length + old.count,
       hashtags: s.pages[id].hashtags ?? "", needsCredit: Boolean(s.pages[id].needsCredit),
-      totals: { youtubeViews: sum("youtube", "views"), instagramViews: sum("instagram", "views"),
-        likes: sum("youtube", "likes") + sum("instagram", "likes") },
-      bestTimes: bestTimes(done, s.timezone), lastStatsRun: s.lastStatsRun ?? null,
+      totals: { youtubeViews: sum("youtube", "views") + old.youtubeViews, instagramViews: sum("instagram", "views") + old.instagramViews,
+        likes: sum("youtube", "likes") + sum("instagram", "likes") + old.likes },
+      bestTimes: bestTimes(done, s.timezone, old.byHour), lastStatsRun: s.lastStatsRun ?? null,
       queued: queued.map(publicVideo), active: active.map(publicVideo), done: done.slice(0, 30).map(publicVideo),
     });
   }
@@ -128,6 +129,14 @@ route("POST", "/api/videos", async (req, _m, user) => {
   if (err) return fail(err);
   if (platforms.includes("instagram") && countTags(`${title} ${description} ${page.hashtags ?? ""}`) > 30) {
     return fail(`Too many hashtags for Instagram (max 30, including this page's saved hashtags: ${page.hashtags}).`);
+  }
+  // Same file uploaded twice to the same page? Ask before queueing it again.
+  if (!b.allowDuplicate) {
+    const twin = (await q.listVideos()).find((x) => q.pageOf(x) === b.pageId && x.status === "ready"
+      && x.size === meta.size && Math.abs(x.duration - meta.duration) < 0.2);
+    if (twin) {
+      return json({ duplicate: true, error: `This looks like a video you already uploaded: "${twin.title}". Upload it again anyway?` }, 409);
+    }
   }
   const credit = page.needsCredit ? {
     url: String(b.credit.url).trim(), author: String(b.credit.author).trim().replace(/^\/?u\//i, ""), permission: true,
@@ -195,6 +204,10 @@ route("POST", "/api/videos/([a-z0-9]+)/edit", async (req, m) => {
   const title = String(b.title ?? ""), description = String(b.description ?? "");
   const err = validateText(title, description, Object.keys(v.posts));
   if (err) return fail(err);
+  const pageTags = (await q.getSettings()).pages[q.pageOf(v)].hashtags ?? "";
+  if (v.posts.instagram && countTags(`${title} ${description} ${pageTags}`) > 30) {
+    return fail(`Too many hashtags for Instagram (max 30, including this page's saved hashtags: ${pageTags}).`);
+  }
   if (v.releasedAt) return fail("This video already started posting, so its text can't change.");
   await q.updateVideo(v.id, (x) => {
     if (x.releasedAt) return false;
@@ -401,6 +414,8 @@ export async function handle(req: Request, ctx: Ctx = {}): Promise<Response> {
       const b = await body(req);
       const err = await auth.createUser(String(b.username ?? ""), String(b.password ?? ""));
       if (err) return fail(err);
+      // Use the first person's own timezone for posting times (can be changed in Settings).
+      if (isValidTimeZone(String(b.timezone ?? ""))) await q.updateSettings((s) => { s.timezone = String(b.timezone); });
       return json({ ok: true }, 200, { "Set-Cookie": await auth.sessionCookie(req, String(b.username).trim()) });
     }
     if (path === "/api/login" && req.method === "POST") {

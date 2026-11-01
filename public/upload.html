@@ -129,8 +129,13 @@ $("f").addEventListener("submit", async e => {
     if (!pageId) throw new Error("Choose which page this video is for.");
     const page = PAGES.find(x => x.id === pageId);
     const credit = page && page.needsCredit ? { url: $("cUrl").value.trim(), author: $("cAuthor").value.trim(), permission: $("cPerm").checked } : null;
-    const c = await api("/api/videos", { json: { pageId, credit, title: $("title").value, description: $("desc").value, platforms,
-      fileName: file.name, size: file.size, width: meta.width, height: meta.height, duration: meta.duration, thumbnail: meta.thumbnail } });
+    const payload = { pageId, credit, title: $("title").value, description: $("desc").value, platforms,
+      fileName: file.name, size: file.size, width: meta.width, height: meta.height, duration: meta.duration, thumbnail: meta.thumbnail };
+    let c = await api("/api/videos", { json: payload });
+    if (!c.ok && c.data.duplicate) {
+      if (!confirm(c.data.error)) throw new Error("Upload cancelled. This video is already in the queue.");
+      c = await api("/api/videos", { json: { ...payload, allowDuplicate: true } });
+    }
     if (!c.ok) throw new Error(c.data.error || "Could not start the upload.");
     const { id, chunkSize, chunkCount } = c.data;
     let done = 0, next = 0;

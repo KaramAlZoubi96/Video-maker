@@ -58,7 +58,7 @@ export async function instagramStats(page: PageId, mediaId: string, f: typeof fe
 }
 
 /** Refresh numbers for recently posted videos (at most every 3 hours). */
-export async function refreshStats(now = Date.now(), f: typeof fetch = fetch, force = false): Promise<number> {
+export async function refreshStats(now = Date.now(), f: typeof fetch = fetch, force = false, deadline = Infinity): Promise<number> {
   const s = await getSettings();
   if (!force && s.lastStatsRun && now - Date.parse(s.lastStatsRun) < EVERY_MS) return 0;
   await updateSettings((x) => { x.lastStatsRun = new Date(now).toISOString(); });
@@ -89,6 +89,7 @@ export async function refreshStats(now = Date.now(), f: typeof fetch = fetch, fo
       .slice(0, MAX_IG_PER_RUN);
     if (ig.length && (await tokens.platformReady(page, "instagram"))) {
       for (const v of ig) {
+        if (Date.now() > deadline) break; // continue next time
         try {
           const st = await instagramStats(page, v.posts.instagram!.remoteId!, f);
           if (st) { await updatePost(v.id, "instagram", { stats: st }); updated++; }
@@ -101,9 +102,9 @@ export async function refreshStats(now = Date.now(), f: typeof fetch = fetch, fo
   return updated;
 }
 
-/** Average views by posting hour, to see which time works best. */
-export function bestTimes(videos: Video[], timezone: string) {
-  const groups = new Map<string, { videos: number; views: number }>();
+/** Average views by posting hour, to see which time works best. `extra` = archived videos. */
+export function bestTimes(videos: Video[], timezone: string, extra: Record<string, { videos: number; views: number }> = {}) {
+  const groups = new Map<string, { videos: number; views: number }>(Object.entries(extra).map(([k, g]) => [k, { ...g }]));
   for (const v of videos) {
     if (!v.releasedAt) continue;
     const total = Object.values(v.posts).reduce((sum, p) => sum + (p?.stats?.views ?? 0), 0);
