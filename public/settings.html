@@ -90,9 +90,11 @@ function accountRow(page, key, a) {
 function pageCard(p, i) {
   return `<div class="card">
     <div class="pagehead"><span class="badge">Page ${i + 1}</span></div>
-    <form onsubmit="event.preventDefault();post('/api/pages/${p.id}',{name:this.n.value,slots:this.s.value}).then(load)">
+    <form onsubmit="event.preventDefault();post('/api/pages/${p.id}',{name:this.n.value,slots:this.s.value,hashtags:this.h.value,needsCredit:this.c.checked}).then(load)">
       <label>Page name</label><input name="n" type="text" maxlength="40" required value="${esc(p.name)}">
       <label>Daily posting times (24h, comma separated)</label><input name="s" type="text" placeholder="12:00, 19:00" value="${esc(p.slots.join(", "))}">
+      <label>Saved hashtags (added to every video on this page)</label><input name="h" type="text" placeholder="#dreamcore #weirdcore" value="${esc(p.hashtags)}">
+      <div class="check" style="margin-top:12px"><input type="checkbox" name="c" id="nc-${p.id}" ${p.needsCredit ? "checked" : ""}> <label for="nc-${p.id}">Ask for story link, author and permission when uploading</label></div>
       <p><button type="submit">Save page</button></p>
     </form>
     ${accountRow(p, "youtube", p.accounts.youtube)}

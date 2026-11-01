@@ -28,6 +28,10 @@ if (process.env.MOCK_PLATFORMS) {
     const u = new URL(req.url);
     const h = u.host;
     if (h === "oauth2.googleapis.com") return Response.json({ access_token: "ya29.mock", refresh_token: "1//mock", expires_in: 3600 });
+    if (h === "www.googleapis.com" && req.method === "GET" && u.pathname.endsWith("/youtube/v3/videos")) {
+      const ids = (u.searchParams.get("id") ?? "").split(",");
+      return Response.json({ items: ids.map((id, i) => ({ id, statistics: { viewCount: String(1200 + i * 3400), likeCount: String(80 + i * 150), commentCount: "7" } })) });
+    }
     if (h === "www.googleapis.com" && u.pathname.endsWith("/channels")) {
       const n = ++channelCalls; // a different fake channel each time you connect
       return Response.json({ items: [{ id: `UCmock${n}`, snippet: { title: `Mock Channel ${n}` } }] });
@@ -51,7 +55,8 @@ if (process.env.MOCK_PLATFORMS) {
       if (u.pathname.endsWith("/media") && req.method === "POST") return Response.json({ id: "C1" });
       if (u.pathname.endsWith("/C1")) return Response.json({ status_code: ++igPolls % 2 === 0 ? "FINISHED" : "IN_PROGRESS" });
       if (u.pathname.endsWith("media_publish")) return Response.json({ id: "M1" });
-      if (u.pathname.endsWith("/M1")) return Response.json({ permalink: "https://instagram.com/reel/mock" });
+      if (u.pathname.endsWith("/M1/insights")) return Response.json({ data: [{ name: "views", values: [{ value: 2300 }] }] });
+      if (u.pathname.endsWith("/M1")) return Response.json({ permalink: "https://instagram.com/reel/mock", like_count: 140, comments_count: 12 });
       if (u.pathname.endsWith("/me")) {
         const tok = u.searchParams.get("access_token") ?? "x";
         return Response.json({ user_id: `17${tok}`, username: `mock_${tok.toLowerCase()}`, account_type: "BUSINESS" });

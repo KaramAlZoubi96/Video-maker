@@ -18,6 +18,24 @@ export interface Post {
   resume: Record<string, any>;
   startedAt?: string | null;
   publishedAt?: string | null;
+  /** Views/likes, refreshed every few hours after posting. null = not available. */
+  stats?: PostStats | null;
+}
+
+export interface PostStats {
+  views: number | null;
+  likes: number | null;
+  comments: number | null;
+  updatedAt: string;
+  /** e.g. "Views need the insights permission" */
+  note?: string | null;
+}
+
+/** Where a story came from (for pages that post other people's stories). */
+export interface Credit {
+  url: string;
+  author: string;
+  permission: boolean;
 }
 
 export interface Video {
@@ -39,6 +57,7 @@ export interface Video {
   filesDeleted?: boolean;
   /** Which page this video belongs to (older videos without it belong to p1). */
   pageId?: PageId;
+  credit?: Credit | null;
   posts: Partial<Record<Platform, Post>>;
 }
 
@@ -58,6 +77,10 @@ export interface PageSettings {
   name: string;
   slots: string[];
   lastSlotRun?: string | null;
+  /** Added to the end of every caption on this page, e.g. "#dreamcore #weirdcore". */
+  hashtags?: string;
+  /** Ask for story link + author + permission when uploading (Reddit stories). */
+  needsCredit?: boolean;
 }
 
 export interface Settings {
@@ -66,6 +89,7 @@ export interface Settings {
   addShortsTag: boolean;
   pages: Record<PageId, PageSettings>;
   lastMaintenance?: string | null;
+  lastStatsRun?: string | null;
   /** Old single-page fields, read once to move them into pages.p1. */
   slots?: string[];
   lastSlotRun?: string | null;
@@ -76,8 +100,8 @@ export const DEFAULT_SETTINGS: Settings = {
   youtubePrivacy: "public",
   addShortsTag: true,
   pages: {
-    p1: { name: "Page 1", slots: ["12:00", "19:00"] },
-    p2: { name: "Page 2", slots: ["15:00"] },
+    p1: { name: "Reddit Stories", slots: ["12:00", "19:00"], hashtags: "#redditstories #reddit #storytime", needsCredit: true },
+    p2: { name: "Dreamcore", slots: ["15:00"], hashtags: "#dreamcore #weirdcore #liminalspaces", needsCredit: false },
   },
 };
 

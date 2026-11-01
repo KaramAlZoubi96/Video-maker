@@ -143,7 +143,8 @@ export async function youtubeAccessToken(page: PageId, force = false, f: typeof 
 export function instagramAuthUrl(state: string) {
   return `${IG_AUTH}?${new URLSearchParams({
     client_id: config.igAppId(), redirect_uri: redirectUri("instagram"), response_type: "code",
-    scope: "instagram_business_basic,instagram_business_content_publish", state, force_reauth: "true",
+    scope: "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_insights",
+    state, force_reauth: "true",
   })}`;
 }
 

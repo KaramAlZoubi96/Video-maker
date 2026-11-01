@@ -18,6 +18,7 @@ import {
   AuthError, DEFAULT_SETTINGS, DeferError, PAGE_IDS, type PageId, PermanentError, type Platform, PLATFORMS, type Post,
   PublishError, type Settings, type StepContext, type StepResult, type Video, config,
 } from "./types.mts";
+import { refreshStats } from "./stats.mts";
 import { YouTubeUploader } from "./youtube.mts";
 
 const RETRY_DELAYS_MIN = [5, 20, 60, 180];
@@ -31,7 +32,8 @@ export const thumbKey = (id: string) => `thumbs/${id}`;
 /** Fill in defaults, and move old single-page settings into page 1. */
 function withDefaults(cur: Partial<Settings> | null): Settings {
   const s = { ...structuredClone(DEFAULT_SETTINGS), ...(cur ?? {}) } as Settings;
-  s.pages = { ...structuredClone(DEFAULT_SETTINGS.pages), ...(cur?.pages ?? {}) };
+  s.pages = structuredClone(DEFAULT_SETTINGS.pages);
+  for (const id of PAGE_IDS) s.pages[id] = { ...s.pages[id], ...(cur?.pages?.[id] ?? {}) };
   if (!cur?.pages && cur?.slots) {
     s.pages.p1 = { ...s.pages.p1, slots: cur.slots, lastSlotRun: cur.lastSlotRun ?? null };
   }
@@ -156,12 +158,24 @@ export async function checkSlots(now = new Date()): Promise<string[]> {
 }
 
 // ---- posting ----------------------------------------------------------------
+export function creditLine(v: Video): string {
+  if (!v.credit?.author) return "";
+  const who = v.credit.author.replace(/^\/?u\//i, "");
+  return `Story by u/${who} on Reddit${v.credit.url ? `\n${v.credit.url}` : ""}`;
+}
+
+/** Final text per platform: caption + story credit + the page's saved hashtags (+ #Shorts on YouTube). */
 export function buildText(v: Video, platform: Platform, s: Settings): { title: string; description: string } {
   const title = v.title.trim();
-  let desc = v.description.trim();
-  if (platform === "youtube" && s.addShortsTag && !`${title} ${desc}`.toLowerCase().includes("#shorts")) {
-    desc = `${desc}\n\n#Shorts`.trim();
-  }
+  const page = s.pages[pageOf(v)];
+  const parts = [v.description.trim(), creditLine(v)];
+  const tags = (page.hashtags ?? "").trim();
+  const text = `${title} ${parts.join(" ")}`.toLowerCase();
+  const has = (tag: string) => new RegExp(`${tag.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}_])`, "u").test(text);
+  const newTags = tags.split(/\s+/).filter((t) => t && !has(t)).join(" ");
+  if (newTags) parts.push(newTags);
+  if (platform === "youtube" && s.addShortsTag && !has("#shorts")) parts.push("#Shorts");
+  const desc = parts.filter(Boolean).join("\n\n");
   return { title, description: platform === "instagram" ? `${title}\n\n${desc}`.trim() : desc };
 }
 
@@ -354,6 +368,13 @@ export async function runScheduler(budgetMs = 22000, ups: Uploaders = realUpload
     await checkSlots();
     const steps = await runDuePosts(deadline, ups, f);
     if (Date.now() < deadline - 3000) await maintenance(Date.now(), f);
+    if (Date.now() < deadline - 3000) {
+      try {
+        await refreshStats(Date.now(), f);
+      } catch (e) {
+        console.warn("Stats refresh failed", e);
+      }
+    }
     return steps;
   });
 }

@@ -33,6 +33,20 @@ function postDots(v) {
   }).join("");
 }
 
+const fmtN = n => n >= 1e6 ? (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M" : n >= 1e3 ? (n / 1e3).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
+
+function statsLine(v) {
+  const ps = Object.values(v.posts).map(p => p.stats).filter(Boolean);
+  if (!ps.length) return "";
+  const views = ps.reduce((n, x) => n + (x.views || 0), 0), likes = ps.reduce((n, x) => n + (x.likes || 0), 0);
+  return `<div class="m">👁 ${fmtN(views)} &nbsp; ❤ ${fmtN(likes)}</div>`;
+}
+
+function statsTitle(v) {
+  return Object.entries(v.posts).filter(([, p]) => p.stats).map(([pl, p]) =>
+    `${NAMES[pl]}: ${p.stats.views ?? "?"} views, ${p.stats.likes ?? "?"} likes, ${p.stats.comments ?? "?"} comments${p.stats.note ? " (" + p.stats.note + ")" : ""}`).join("\n");
+}
+
 function notes(v) {
   let h = "";
   for (const [pl, p] of Object.entries(v.posts)) {
@@ -40,6 +54,7 @@ function notes(v) {
     else if (v.releasedAt && p.status !== "published" && (p.note || p.lastError)) h += `<div class="muted">${NAMES[pl]}: ${esc(p.note || "")}${p.nextAttemptAt ? " · next try " + fmtTime(p.nextAttemptAt, TZ) : ""}</div>`;
   }
   if (v.status === "uploading") h += `<div class="muted">Upload not finished. Upload it again if this stays.</div>`;
+  if (v.credit) h += `<div class="muted">📖 <a href="${esc(v.credit.url)}" target="_blank" rel="noopener">u/${esc(v.credit.author)}</a>${v.credit.permission ? " · permission ✓" : ""}</div>`;
   return h ? `<div class="notes">${h}</div>` : "";
 }
 
@@ -62,7 +77,7 @@ function tile(v, kind, i, total) {
       </form></details>` : "";
   return `<div class="tile">
     <div class="pic">${label}<img src="/api/thumb/${v.id}" alt="" loading="lazy" onerror="this.remove()">
-      <div class="ov"><div class="t">${esc(v.title)}</div><div class="m">${meta}</div><div class="dots">${postDots(v)}</div></div></div>
+      <div class="ov" title="${esc(statsTitle(v))}"><div class="t">${esc(v.title)}</div><div class="m">${meta}</div>${statsLine(v)}<div class="dots">${postDots(v)}</div></div></div>
     ${notes(v)}
     <div class="acts">${acts || '<span class="grow"></span>'}${del}</div>
     ${edit}
@@ -88,11 +103,33 @@ function render() {
   const next = p.nextSlot
     ? `<div class="next"><div class="clock">⏰</div><div><b>Next drop: ${fmtTime(p.nextSlot, TZ)}</b><small>${p.queued[0] ? `"${esc(p.queued[0].title)}" goes out` : "Nothing waiting. Upload a video for this page."}${acc ? " · " + esc(acc) : ""}</small></div></div>`
     : `<div class="next"><div class="clock">⏸</div><div><b>No posting times for ${esc(p.name)}</b><small>Videos only post when you press "Post now". <a href="/settings.html">Set times</a></small></div></div>`;
-  document.getElementById("page").innerHTML = next
+  let stats = "";
+  if (p.publishedCount) {
+    const best = p.bestTimes.length
+      ? `<div class="small" style="margin-top:10px"><b>Best posting times</b> (average views per video)<div class="times">${p.bestTimes.slice(0, 5).map((t, i) =>
+          `<div class="trow"><span>${i === 0 ? "🏆 " : ""}${t.time}</span><span class="bar"><i style="width:${Math.max(4, Math.round(t.avgViews / Math.max(1, p.bestTimes[0].avgViews) * 100))}%"></i></span><span>${fmtN(t.avgViews)} <span class="muted">· ${t.videos} video${t.videos > 1 ? "s" : ""}</span></span></div>`).join("")}</div>
+          <div class="muted small">Tip: try a few different times for 2–3 weeks, then keep the best ones in Settings.</div></div>`
+      : `<div class="muted small" style="margin-top:8px">Numbers show up a few hours after posting.</div>`;
+    stats = `<div class="card statsbox"><div class="statrow">
+        <div><b>${fmtN(p.totals.youtubeViews)}</b><span>YouTube views</span></div>
+        <div><b>${fmtN(p.totals.instagramViews)}</b><span>Instagram views</span></div>
+        <div><b>${fmtN(p.totals.likes)}</b><span>Likes</span></div>
+        <div><b>${p.publishedCount}</b><span>Posted</span></div></div>
+      ${best}
+      <div class="muted small" style="margin-top:8px">${p.lastStatsRun ? "Updated " + fmtDate(p.lastStatsRun, TZ) + " · " : ""}<button class="link" onclick="refreshStats()">Update now</button></div></div>`;
+  }
+  document.getElementById("page").innerHTML = next + stats
     + section("Posting now", p.active, "active")
     + section(`Up next (${p.queued.length})`, p.queued, "queued", `No videos waiting for ${esc(p.name)}. <a href="/upload.html?page=${p.id}">Upload one</a>`)
     + section(`Posted (${p.publishedCount})`, p.done, "done");
   window.__busy = d.pages.some(x => x.active.length);
+}
+
+async function refreshStats() {
+  flash("Updating numbers…", false);
+  const r = await api("/api/stats/refresh", { json: {} });
+  flash(r.ok ? r.data.message : (r.data.error || "Could not update numbers."), !r.ok);
+  await load();
 }
 
 function pick(id) { current = id; try { localStorage.setItem("page", id); } catch (_) {} render(); }

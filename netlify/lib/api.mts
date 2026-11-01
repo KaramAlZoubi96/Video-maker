@@ -4,6 +4,7 @@ import * as auth from "./auth.mts";
 import * as q from "./queue.mts";
 import { kv } from "./store.mts";
 import { isValidTimeZone, nextSlotAfter, normalizeSlots, parseSlot } from "./time.mts";
+import { bestTimes, refreshStats } from "./stats.mts";
 import * as tokens from "./tokens.mts";
 import {
   CHUNK_SIZE, DESC_MAX, isPageId, PAGE_IDS, type PageId, MAX_DURATION, MAX_FILE_BYTES, MIN_DURATION, type Platform, PLATFORMS, type Post, PublishError, TITLE_MAX, type Video, platformName,
@@ -40,6 +41,18 @@ export function validateText(title: string, description: string, platforms: stri
     return "Instagram allows at most 30 hashtags.";
   }
   if (!platforms.length) return "Choose at least one platform.";
+  return null;
+}
+
+const countTags = (t: string) => (t.match(/#/g) || []).length;
+
+/** Story link must be a Reddit post; author and permission are required. */
+export function validateCredit(c: any): string | null {
+  const url = String(c?.url ?? "").trim();
+  const author = String(c?.author ?? "").trim().replace(/^\/?u\//i, "");
+  if (!/^https:\/\/((www|old|new|m)\.)?(reddit\.com\/r\/|redd\.it\/)\S+$/i.test(url)) return "Paste the link to the Reddit post (https://www.reddit.com/r/...).";
+  if (!/^[A-Za-z0-9_-]{3,20}$/.test(author)) return "Write the Reddit username of the story's author (like u/someone).";
+  if (c?.permission !== true) return "Tick the box to confirm the author said yes. Posting stories without permission can get your videos taken down.";
   return null;
 }
 
@@ -87,8 +100,13 @@ route("GET", "/api/dashboard", async () => {
     const accounts: Record<string, string | null> = {};
     for (const p of PLATFORMS) accounts[p] = (await tokens.getAccount(id, p))?.displayName ?? null;
     problems.push(...(await tokens.accountProblems(id, s.pages[id].name)));
+    const sum = (pl: "youtube" | "instagram", k: "views" | "likes") => done.reduce((n, v) => n + (v.posts[pl]?.stats?.[k] ?? 0), 0);
     pages.push({
       id, name: s.pages[id].name, nextSlot: next?.toISOString() ?? null, accounts, publishedCount: done.length,
+      hashtags: s.pages[id].hashtags ?? "", needsCredit: Boolean(s.pages[id].needsCredit),
+      totals: { youtubeViews: sum("youtube", "views"), instagramViews: sum("instagram", "views"),
+        likes: sum("youtube", "likes") + sum("instagram", "likes") },
+      bestTimes: bestTimes(done, s.timezone), lastStatsRun: s.lastStatsRun ?? null,
       queued: queued.map(publicVideo), active: active.map(publicVideo), done: done.slice(0, 30).map(publicVideo),
     });
   }
@@ -104,8 +122,16 @@ route("POST", "/api/videos", async (req, _m, user) => {
     fileName: String(b.fileName ?? ""),
   };
   if (!isPageId(b.pageId)) return fail("Choose which page this video is for.");
-  const err = validateText(title, description, platforms) ?? validateVideoMeta(meta);
+  const page = (await q.getSettings()).pages[b.pageId as PageId];
+  const err = validateText(title, description, platforms) ?? validateVideoMeta(meta)
+    ?? (page.needsCredit ? validateCredit(b.credit) : null);
   if (err) return fail(err);
+  if (platforms.includes("instagram") && countTags(`${title} ${description} ${page.hashtags ?? ""}`) > 30) {
+    return fail(`Too many hashtags for Instagram (max 30, including this page's saved hashtags: ${page.hashtags}).`);
+  }
+  const credit = page.needsCredit ? {
+    url: String(b.credit.url).trim(), author: String(b.credit.author).trim().replace(/^\/?u\//i, ""), permission: true,
+  } : null;
   const id = `${Date.now().toString(36)}${randomBytes(4).toString("hex")}`;
   const now = new Date().toISOString();
   const posts: Video["posts"] = {};
@@ -114,7 +140,7 @@ route("POST", "/api/videos", async (req, _m, user) => {
     id, uploader: user, fileName: meta.fileName.slice(0, 200), title: title.trim(), description: description.trim(),
     size: meta.size, chunkSize: CHUNK_SIZE, chunkCount: Math.ceil(meta.size / CHUNK_SIZE),
     width: meta.width, height: meta.height, duration: meta.duration, status: "uploading", position: 0,
-    createdAt: now, posts, pageId: b.pageId,
+    createdAt: now, posts, pageId: b.pageId, credit,
   };
   await kv().setJSON(q.videoKey(id), video);
   if (typeof b.thumbnail === "string" && b.thumbnail.startsWith("data:image/jpeg;base64,") && b.thumbnail.length < 300_000) {
@@ -243,7 +269,8 @@ route("GET", "/api/settings", async () => {
       const a = await tokens.getAccount(id, p);
       accounts[p] = a ? { displayName: a.displayName, status: a.status, error: a.error, tokenExpiresAt: a.tokenExpiresAt } : null;
     }
-    pages.push({ id, name: s.pages[id].name, slots: s.pages[id].slots, accounts });
+    pages.push({ id, name: s.pages[id].name, slots: s.pages[id].slots, hashtags: s.pages[id].hashtags ?? "",
+      needsCredit: Boolean(s.pages[id].needsCredit), accounts });
   }
   return json({
     timezone: s.timezone, youtubePrivacy: s.youtubePrivacy, addShortsTag: s.addShortsTag, pages,
@@ -276,8 +303,12 @@ route("POST", "/api/pages/(p1|p2)", async (req, m) => {
   const bad = parts.find((p) => !parseSlot(p));
   if (bad) return fail(`'${bad}' is not a time. Use 24h format like 12:00, 19:30.`);
   const slots = normalizeSlots(parts);
+  const hashtags = String(b.hashtags ?? "").trim().split(/\s+/).filter(Boolean)
+    .map((t) => (t.startsWith("#") ? t : `#${t}`)).join(" ");
+  if (hashtags.length > 500) return fail("Saved hashtags are too long (max 500 characters).");
+  if (countTags(hashtags) > 20) return fail("Keep saved hashtags to 20 or fewer (Instagram allows 30 per post in total).");
   await q.updateSettings((s) => {
-    s.pages[id] = { ...s.pages[id], name, slots };
+    s.pages[id] = { ...s.pages[id], name, slots, hashtags, needsCredit: Boolean(b.needsCredit) };
   });
   return json({ ok: true, message: `"${name}" saved.` + (slots.length ? "" : " No times set: this page only posts with 'Post now'.") });
 });
@@ -297,6 +328,11 @@ route("POST", "/api/password", async (req, _m, user) => {
   if (err) return fail(err);
   await auth.setPassword(user, String(b.new));
   return json({ ok: true, message: "Password changed." });
+});
+
+route("POST", "/api/stats/refresh", async () => {
+  const n = await refreshStats(Date.now(), fetch, true);
+  return json({ ok: true, message: n ? `Updated numbers for ${n} posts.` : "No posted videos to update yet." });
 });
 
 // ---- accounts -----------------------------------------------------------------

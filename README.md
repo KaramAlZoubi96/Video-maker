@@ -3,7 +3,10 @@
 A private website for you and your friend: upload a vertical video, and it posts itself to
 **YouTube Shorts** and **Instagram Reels** at the times you choose. Runs on Netlify, so your computer can be off.
 
-- 📺 **2 pages** (e.g. Funny + Cooking): each page has its own YouTube channel, Instagram account and posting times
+- 📺 **2 pages** (Reddit Stories + Dreamcore): each page has its own YouTube channel, Instagram account and posting times
+- 📖 Reddit Stories page asks for the story link, author and permission, and credits the author in the caption
+- #️⃣ Saved hashtags per page, added to every video automatically
+- 📈 Views & likes for every video, totals per page, and which posting time gets the most views
 - 👥 Each person has their own login (you add your friend in Settings)
 - 📤 Upload from phone or PC; video checked in the browser before uploading (vertical? length? size?)
 - 🗓 Queue with daily posting times, reorder, edit, "Post now"
@@ -15,6 +18,12 @@ A private website for you and your friend: upload a vertical video, and it posts
 1. [docs/DEPLOY_NETLIFY.md](docs/DEPLOY_NETLIFY.md) — create the Netlify site (free `*.netlify.app` address)
 2. [docs/SETUP_YOUTUBE.md](docs/SETUP_YOUTUBE.md) — connect YouTube
 3. [docs/SETUP_INSTAGRAM.md](docs/SETUP_INSTAGRAM.md) — connect Instagram
+
+## Updates
+The site deploys automatically from GitHub: every change pushed to `main` is checked (`npm test`) and,
+if the checks pass, published by Netlify within about a minute. If the checks fail, the live site stays as it was.
+
+Backup option without GitHub: double-click **`deploy.bat`** (Windows) or **`deploy.command`** (Mac).
 
 ## Daily use
 1. **Upload** → choose the page, the video (MP4/MOV, vertical, 3 s–3 min, up to 150 MB), title, caption with hashtags.
@@ -35,7 +44,7 @@ scripts/local-server.mts   run the site on your computer for testing
 ## For developers
 ```bash
 npm install
-npm test            # 54 tests
+npm test            # 56 tests
 npm run typecheck
 # Try it locally with fake YouTube/Instagram (no accounts needed), then open http://localhost:8888
 MOCK_PLATFORMS=1 GOOGLE_CLIENT_ID=x GOOGLE_CLIENT_SECRET=x node --experimental-strip-types scripts/local-server.mts

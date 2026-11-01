@@ -1,7 +1,8 @@
 [build]
   publish = "public"
   functions = "netlify/functions"
-  command = "echo 'no build step'"
+  # Netlify runs the checks before every update; if they fail, the live site stays as it was.
+  command = "npm test"
 
 [functions]
   node_bundler = "esbuild"

@@ -83,7 +83,8 @@ describe("login", () => {
 });
 
 describe("upload", () => {
-  const meta = { pageId: "p1", title: "My short", description: "#fun", platforms: ["youtube", "instagram"], fileName: "a.mp4", width: 1080, height: 1920, duration: 12 };
+  const credit = { url: "https://www.reddit.com/r/AmItheAsshole/comments/abc123/aita/", author: "u/storyteller", permission: true };
+  const meta = { pageId: "p1", credit, title: "My short", description: "#fun", platforms: ["youtube", "instagram"], fileName: "a.mp4", width: 1080, height: 1920, duration: 12 };
 
   it("chunked upload → ready in queue", async () => {
     const b = await loggedIn();
@@ -102,6 +103,7 @@ describe("upload", () => {
     expect((await b.call("POST", `/api/videos/${id}/complete`, {})).status).toBe(200);
     const v = (await q.getVideo(id))!;
     expect(v.status).toBe("ready");
+    expect(v.credit).toEqual({ url: credit.url, author: "storyteller", permission: true });
     expect([...(await q.readRange(v, 0, size))].length).toBe(size);
     const d = (await b.call("GET", "/api/dashboard")).json;
     expect(d.pages[0].queued[0].title).toBe("My short");
@@ -118,6 +120,16 @@ describe("upload", () => {
     expect((await b.call("POST", "/api/videos", { ...meta, size: 100, platforms: [] })).json.error).toMatch(/platform/);
     expect((await b.call("POST", "/api/videos", { ...meta, size: 100, title: "" })).json.error).toMatch(/title/);
     expect((await b.call("POST", "/api/videos", { ...meta, size: 100, pageId: "p9" })).json.error).toMatch(/which page/);
+    // Reddit Stories page needs the story credit
+    expect((await b.call("POST", "/api/videos", { ...meta, size: 100, credit: undefined })).json.error).toMatch(/link to the Reddit post/);
+    expect((await b.call("POST", "/api/videos", { ...meta, size: 100, credit: { ...credit, url: "https://evil.com/x" } })).json.error).toMatch(/Reddit post/);
+    expect((await b.call("POST", "/api/videos", { ...meta, size: 100, credit: { ...credit, author: "" } })).json.error).toMatch(/username/);
+    expect((await b.call("POST", "/api/videos", { ...meta, size: 100, credit: { ...credit, permission: false } })).json.error).toMatch(/said yes/);
+    // Dreamcore page doesn't need it
+    expect((await b.call("POST", "/api/videos", { ...meta, size: 100, pageId: "p2", credit: undefined })).status).toBe(200);
+    // Page hashtags count toward Instagram's 30
+    const many = Array.from({ length: 28 }, (_, i) => `#t${i}`).join(" ");
+    expect((await b.call("POST", "/api/videos", { ...meta, size: 100, description: many })).json.error).toMatch(/Too many hashtags/);
     const c = await b.call("POST", "/api/videos", { ...meta, size: 100 });
     const notVideo = await b.call("PUT", `/api/videos/${c.json.id}/chunks/0`, undefined, { body: new Uint8Array(100) });
     expect(notVideo.json.error).toMatch(/doesn't look like an MP4/);
@@ -132,7 +144,7 @@ describe("upload", () => {
     await b.call("POST", `/api/videos/${c.json.id}/complete`, {});
     expect((await b.call("POST", `/api/videos/${c.json.id}/post-now`, {})).json.error).toMatch(/Connect YouTube/);
     await tokens.saveAccount("p2", "youtube", { accessToken: "a", refreshToken: "r", status: "ok" });
-    expect((await b.call("POST", `/api/videos/${c.json.id}/post-now`, {})).json.error).toMatch(/Connect YouTube for "Page 1"/);
+    expect((await b.call("POST", `/api/videos/${c.json.id}/post-now`, {})).json.error).toMatch(/Connect YouTube for "Reddit Stories"/);
     await tokens.saveAccount("p1", "youtube", { accessToken: "a", refreshToken: "r", status: "ok" });
     expect((await b.call("POST", `/api/videos/${c.json.id}/post-now`, {})).status).toBe(200);
     expect((await q.getVideo(c.json.id))!.releasedAt).toBeTruthy();
@@ -161,16 +173,16 @@ describe("settings & accounts", () => {
   it("saves schedule and rejects bad times", async () => {
     const b = await loggedIn();
     expect((await b.call("POST", "/api/settings", { timezone: "Asia/Jerusalem", youtubePrivacy: "unlisted", addShortsTag: false })).status).toBe(200);
-    expect((await b.call("POST", "/api/pages/p2", { name: "Cooking", slots: "19:00, 9:05" })).status).toBe(200);
+    expect((await b.call("POST", "/api/pages/p2", { name: "Cooking", slots: "19:00, 9:05", hashtags: "food  #recipe", needsCredit: false })).status).toBe(200);
     const s = await q.getSettings();
     expect([s.timezone, s.youtubePrivacy, s.addShortsTag]).toEqual(["Asia/Jerusalem", "unlisted", false]);
-    expect(s.pages.p2).toMatchObject({ name: "Cooking", slots: ["09:05", "19:00"] });
+    expect(s.pages.p2).toMatchObject({ name: "Cooking", slots: ["09:05", "19:00"], hashtags: "#food #recipe", needsCredit: false });
     expect(s.pages.p1.slots).toEqual(["12:00", "19:00"]);
     expect((await b.call("POST", "/api/pages/p1", { name: "Funny", slots: "25:99" })).json.error).toMatch(/not a time/);
     expect((await b.call("POST", "/api/pages/p1", { name: "", slots: "" })).json.error).toMatch(/name/);
     expect((await b.call("POST", "/api/settings", { timezone: "Mars/Base" })).json.error).toMatch(/timezone/);
     const d = (await b.call("GET", "/api/dashboard")).json;
-    expect(d.pages.map((p: any) => p.name)).toEqual(["Page 1", "Cooking"]);
+    expect(d.pages.map((p: any) => p.name)).toEqual(["Reddit Stories", "Cooking"]);
   });
 
   it("YouTube connect uses offline access and checks the security state", async () => {

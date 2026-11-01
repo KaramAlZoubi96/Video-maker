@@ -24,6 +24,16 @@
   <label for="desc">Description / Instagram caption (hashtags go here)</label>
   <textarea id="desc" maxlength="2000" placeholder="Write something… #funny"></textarea>
   <div class="muted small"><span id="dc">0</span>/2000 · Instagram caption = title + this text</div>
+  <div class="muted small" id="autoTags"></div>
+  <div id="creditBox" class="card hidden" style="margin:16px 0 0;background:var(--card-2)">
+    <b>📖 Where is this story from?</b>
+    <div class="muted small">Stories belong to the people who wrote them. Asking first protects your channel from takedowns. The credit is added to the caption automatically.</div>
+    <label for="cUrl">Link to the Reddit post</label>
+    <input id="cUrl" type="text" inputmode="url" placeholder="https://www.reddit.com/r/AmItheAsshole/comments/...">
+    <label for="cAuthor">Author's Reddit username</label>
+    <input id="cAuthor" type="text" placeholder="u/username">
+    <div class="check" style="margin-top:12px"><input type="checkbox" id="cPerm"> <label for="cPerm">The author said yes to us using this story</label></div>
+  </div>
   <label>Post to</label>
   <div class="check"><input type="checkbox" id="yt" checked> <label for="yt">YouTube Shorts <span class="muted small" id="ytName"></span></label></div>
   <div class="check"><input type="checkbox" id="ig" checked> <label for="ig">Instagram Reels <span class="muted small" id="igName"></span></label></div>
@@ -105,13 +115,21 @@ $("f").addEventListener("submit", async e => {
   if (!file) return flash("Choose a video file.", true);
   if (!meta) return flash("Wait for the video check to finish (or fix the problem shown under the file).", true);
   if (!platforms.length) return flash("Choose at least one platform.", true);
+  const pg = PAGES.find(x => x.id === (document.querySelector("input[name=page]:checked") || {}).value);
+  if (pg && pg.needsCredit) {
+    if (!/reddit\.com\/r\/|redd\.it\//i.test($("cUrl").value)) return flash("Paste the link to the Reddit post.", true);
+    if (!$("cAuthor").value.trim()) return flash("Write the author's Reddit username.", true);
+    if (!$("cPerm").checked) return flash("Tick the box to confirm the author said yes. Posting stories without permission can get your videos taken down.", true);
+  }
   $("go").disabled = true; $("pb").style.display = "block"; $("pb").firstElementChild.style.width = "0";
   const setMsg = t => $("msg").textContent = t;
   try {
     setMsg("Starting…");
     const pageId = (document.querySelector("input[name=page]:checked") || {}).value;
     if (!pageId) throw new Error("Choose which page this video is for.");
-    const c = await api("/api/videos", { json: { pageId, title: $("title").value, description: $("desc").value, platforms,
+    const page = PAGES.find(x => x.id === pageId);
+    const credit = page && page.needsCredit ? { url: $("cUrl").value.trim(), author: $("cAuthor").value.trim(), permission: $("cPerm").checked } : null;
+    const c = await api("/api/videos", { json: { pageId, credit, title: $("title").value, description: $("desc").value, platforms,
       fileName: file.name, size: file.size, width: meta.width, height: meta.height, duration: meta.duration, thumbnail: meta.thumbnail } });
     if (!c.ok) throw new Error(c.data.error || "Could not start the upload.");
     const { id, chunkSize, chunkCount } = c.data;
@@ -149,6 +167,8 @@ function showAccounts() {
   if (!p) return;
   $("ytName").innerHTML = p.accounts.youtube ? "→ " + esc(p.accounts.youtube) : '<span class="err">(not connected yet)</span>';
   $("igName").innerHTML = p.accounts.instagram ? "→ " + esc(p.accounts.instagram) : '<span class="err">(not connected yet)</span>';
+  $("autoTags").innerHTML = p.hashtags ? `Added automatically for ${esc(p.name)}: <b>${esc(p.hashtags)}</b> <a href="/settings.html">change</a>` : "";
+  $("creditBox").classList.toggle("hidden", !p.needsCredit);
 }
 (async () => {
   if (!(await requireUser())) return;

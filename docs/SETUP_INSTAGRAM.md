@@ -20,6 +20,13 @@ Instagram app → Profile → ☰ → **Account type and tools → Switch to pro
 
 ## 4. Connect it — choose ONE way
 
+### Views on the website
+To show **Instagram views** on the queue page, the Meta app needs the permission
+`instagram_business_manage_insights` (likes and comments work without it):
+- **Connect button (Way B):** the site asks for it automatically.
+- **Pasted token (Way A):** in the Meta app → **Instagram → API setup with Instagram login → Permissions**, make sure
+  `instagram_business_manage_insights` is added *before* you click **Generate token**.
+
 ### Way A (easiest): paste a token
 1. App dashboard → **Instagram → API setup with Instagram login** → section **Generate access tokens** →
    **Add account** → log in → **Generate token** → copy it.

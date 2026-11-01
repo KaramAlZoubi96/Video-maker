@@ -7,6 +7,7 @@ import {
   AuthError, DeferError, PermanentError, type StepResult, TransientError, type Video,
 } from "../netlify/lib/types.mts";
 import { addVideo, freshStore } from "./helpers.ts";
+import { bestTimes, refreshStats } from "../netlify/lib/stats.mts";
 
 freshStore();
 
@@ -102,7 +103,7 @@ describe("two pages", () => {
     const f = async (url: any) => String(url).includes("channels")
       ? Response.json({ items: [{ id: "UC-p1", snippet: { title: "Funny" } }] })
       : Response.json({ access_token: "a", refresh_token: "r", expires_in: 3600 });
-    await expect(tokens.youtubeFinishConnect("p2", "code", q.pageName, f as any)).rejects.toThrow(/already connected to "Page 1"/);
+    await expect(tokens.youtubeFinishConnect("p2", "code", q.pageName, f as any)).rejects.toThrow(/already connected to "Reddit Stories"/);
   });
 
   it("old single-page data moves to page 1", async () => {
@@ -239,6 +240,59 @@ describe("posting", () => {
     const { ups } = fakeUploaders({ youtube: [] });
     await run(ups);
     expect((await posts(v.id)).youtube!.lastError).toMatch(/removed from storage/);
+  });
+});
+
+describe("captions", () => {
+  it("adds story credit, page hashtags and #Shorts without repeating tags", async () => {
+    const v = await addVideo({ description: "wild story #reddit", credit: { url: "https://www.reddit.com/r/tifu/comments/x/", author: "teller", permission: true } } as any);
+    const s = await q.getSettings();
+    const yt = q.buildText(v, "youtube", s).description;
+    expect(yt).toBe("wild story #reddit\n\nStory by u/teller on Reddit\nhttps://www.reddit.com/r/tifu/comments/x/\n\n#redditstories #storytime\n\n#Shorts");
+    const ig = q.buildText(v, "instagram", s).description;
+    expect(ig.startsWith("T\n\nwild story")).toBe(true);
+    expect(ig).not.toContain("#Shorts");
+    const r = await addVideo({ description: "#redditstories only" });
+    expect(q.buildText(r, "youtube", s).description).toContain("#reddit #storytime"); // #reddit still added
+    const d = await addVideo({ pageId: "p2", description: "" });
+    expect(q.buildText(d, "instagram", s).description).toBe("T\n\n#dreamcore #weirdcore #liminalspaces");
+  });
+});
+
+describe("views & likes", () => {
+  it("collects YouTube and Instagram numbers and finds the best time", async () => {
+    await connectAll();
+    await tokens.saveAccount("p1", "youtube", { tokenExpiresAt: new Date(Date.now() + 3600e3).toISOString() });
+    const a = await addVideo({ releasedAt: "2026-05-01T12:00:30Z" } as any);
+    const b = await addVideo({ releasedAt: "2026-05-01T19:00:20Z" } as any);
+    const pub = (id: string) => ({ status: "published", publishedAt: new Date().toISOString(), remoteId: id, attempts: 0, resume: {} });
+    await q.updateVideo(a.id, (v) => { v.posts = { youtube: pub("YA"), instagram: pub("IA") } as any; return true; });
+    await q.updateVideo(b.id, (v) => { v.posts = { youtube: pub("YB"), instagram: pub("IB") } as any; return true; });
+    const seen: string[] = [];
+    const f = (async (url: any) => {
+      const u = new URL(String(url));
+      seen.push(u.host + u.pathname);
+      if (u.host === "www.googleapis.com") return Response.json({ items: [
+        { id: "YA", statistics: { viewCount: "100", likeCount: "10", commentCount: "1" } },
+        { id: "YB", statistics: { viewCount: "900", likeCount: "90", commentCount: "9" } }] });
+      if (u.pathname.endsWith("/insights")) return u.pathname.includes("IA")
+        ? Response.json({ data: [{ name: "views", values: [{ value: 50 }] }] })
+        : Response.json({ error: { code: 10, message: "no permission" } }, { status: 400 });
+      return Response.json({ like_count: 5, comments_count: 2 });
+    }) as typeof fetch;
+    expect(await refreshStats(Date.now(), f, true)).toBe(4);
+    const va = (await q.getVideo(a.id))!, vb = (await q.getVideo(b.id))!;
+    expect(va.posts.youtube!.stats).toMatchObject({ views: 100, likes: 10, comments: 1 });
+    expect(va.posts.instagram!.stats).toMatchObject({ views: 50, likes: 5, comments: 2 });
+    expect(vb.posts.instagram!.stats!.views).toBeNull();
+    expect(vb.posts.instagram!.stats!.note).toMatch(/insights permission/);
+    expect(seen.filter((x) => x.startsWith("www.googleapis.com")).length).toBe(1); // one request for all YouTube videos
+    expect(bestTimes([va, vb], "UTC")).toEqual([
+      { time: "19:00", videos: 1, avgViews: 900 },
+      { time: "12:00", videos: 1, avgViews: 150 },
+    ]);
+    // Not again within 3 hours unless forced
+    expect(await refreshStats(Date.now(), f)).toBe(0);
   });
 });
 
