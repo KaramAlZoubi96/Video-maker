@@ -5,6 +5,7 @@ import * as q from "./queue.mts";
 import { kv } from "./store.mts";
 import { isValidTimeZone, nextSlotAfter, normalizeSlots, parseSlot } from "./time.mts";
 import { bestTimes, refreshStats } from "./stats.mts";
+import * as stories from "./stories.mts";
 import * as tokens from "./tokens.mts";
 import {
   CHUNK_SIZE, DESC_MAX, isPageId, PAGE_IDS, type PageId, MAX_DURATION, MAX_FILE_BYTES, MIN_DURATION, type Platform, PLATFORMS, type Post, PublishError, TITLE_MAX, type Video, platformName,
@@ -152,6 +153,7 @@ route("POST", "/api/videos", async (req, _m, user) => {
     size: meta.size, chunkSize: CHUNK_SIZE, chunkCount: Math.ceil(meta.size / CHUNK_SIZE),
     width: meta.width, height: meta.height, duration: meta.duration, status: "uploading", position: 0,
     createdAt: now, posts, pageId: b.pageId, credit,
+    storyId: typeof b.storyId === "string" && /^[a-z0-9_]{3,20}$/.test(b.storyId) ? b.storyId : null,
   };
   await kv().setJSON(q.videoKey(id), video);
   if (typeof b.thumbnail === "string" && b.thumbnail.startsWith("data:image/jpeg;base64,") && b.thumbnail.length < 300_000) {
@@ -190,6 +192,13 @@ route("POST", "/api/videos/([a-z0-9]+)/complete", async (_req, m) => {
     x.position = maxPos + 1;
     return true;
   });
+  if (v.storyId) {
+    await stories.updateStory(v.storyId, (s) => {
+      if (!s.videoIds.includes(v.id)) s.videoIds.push(v.id);
+      s.status = "queued";
+      return true;
+    });
+  }
   return json({ ok: true });
 });
 
@@ -353,6 +362,64 @@ route("POST", "/api/password", async (req, _m, user) => {
 route("POST", "/api/stats/refresh", async () => {
   const n = await refreshStats(Date.now(), fetch, true);
   return json({ ok: true, message: n ? `Updated numbers for ${n} posts.` : "No posted videos to update yet." });
+});
+
+// ---- stories ------------------------------------------------------------------
+route("GET", "/api/stories", async () => {
+  const all = await stories.listStories();
+  const order = stories.STORY_STATUSES;
+  all.sort((a, b) => order.indexOf(a.status) - order.indexOf(b.status) || b.rating - a.rating);
+  return json({ stories: all });
+});
+
+route("POST", "/api/stories/import", async (req, _m, user) => {
+  const b = await body(req);
+  if (!Array.isArray(b.stories) || !b.stories.length) return fail("Tick at least one story.");
+  const r = await stories.importStories(b.stories, user);
+  if (r.error) return fail(r.error);
+  return json({ ok: true, ...r, message: `Saved ${r.added} ${r.added === 1 ? "story" : "stories"}${r.skipped ? ` (${r.skipped} were already saved or not usable)` : ""}.` });
+});
+
+route("POST", "/api/stories/([a-z0-9_]+)", async (req, m, user) => {
+  const b = await body(req);
+  if (b.status !== undefined && !stories.STORY_STATUSES.includes(b.status)) return fail("Unknown story status.");
+  if (!(await stories.getStory(m[1]))) return fail("Story not found.", 404);
+  const s = await stories.updateStory(m[1], (x) => {
+    if (b.status !== undefined) x.status = b.status;
+    if (b.pick === true) x.pickedBy = user;
+    if (b.pick === false) x.pickedBy = null;
+    if (typeof b.title === "string" && b.title.trim()) x.title = b.title.trim().slice(0, 300);
+    if (typeof b.body === "string" && b.body.trim().length >= 50) x.body = b.body.trim().slice(0, 40000);
+    if (typeof b.note === "string") x.note = b.note.trim().slice(0, 500) || null;
+    return true;
+  });
+  if (!s) return fail("Story not found.", 404);
+  return json({ ok: true, story: s });
+});
+
+route("POST", "/api/stories/([a-z0-9_]+)/delete", async (_req, m) => {
+  await stories.deleteStory(m[1]);
+  return json({ ok: true, message: "Story removed from the board." });
+});
+
+route("GET", "/api/stories/([a-z0-9_]+)", async (_req, m) => {
+  const s = await stories.getStory(m[1]);
+  return s ? json({ story: s }) : fail("Story not found.", 404);
+});
+
+// ---- background clips: which minutes were already used ---------------------------
+route("GET", "/api/backgrounds/used", async (req) => {
+  const key = new URL(req.url).searchParams.get("key") ?? "";
+  if (!key) return fail("Missing key.");
+  return json({ ranges: await stories.getUsedRanges(key) });
+});
+
+route("POST", "/api/backgrounds/used", async (req) => {
+  const b = await body(req);
+  if (!b.key) return fail("Missing key.");
+  if (b.clear) await stories.clearUsedRanges(String(b.key));
+  else await stories.addUsedRange(String(b.key), Number(b.start), Number(b.end));
+  return json({ ok: true });
 });
 
 // ---- accounts -----------------------------------------------------------------

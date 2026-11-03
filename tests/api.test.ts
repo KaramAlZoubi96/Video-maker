@@ -181,6 +181,53 @@ describe("upload", () => {
   });
 });
 
+describe("stories board", () => {
+  const story = (id: string, extra: object = {}) => ({ id, subreddit: "AmItheAsshole", author: "u/teller", title: "AITA for this?", body: "x ".repeat(100), score: 900, comments: 50, rating: 82, reasons: ["Popular"], ...extra });
+
+  it("saves ticked stories once, shares them, and tracks status", async () => {
+    const b = await loggedIn();
+    const r = await b.call("POST", "/api/stories/import", { stories: [story("abc123"), story("def456"), story("abc123"), { id: "bad id!", title: "x", body: "y" }] });
+    expect(r.json).toMatchObject({ added: 2, skipped: 2 });
+    expect((await b.call("POST", "/api/stories/import", { stories: [story("abc123")] })).json.added).toBe(0);
+    // friend sees the same board
+    await b.call("POST", "/api/users", { username: "bob", password: "password456" });
+    const friend = new Browser();
+    await friend.call("POST", "/api/login", { username: "bob", password: "password456" });
+    const list = (await friend.call("GET", "/api/stories")).json.stories;
+    expect(list.map((s: any) => s.id).sort()).toEqual(["abc123", "def456"]);
+    expect(list[0].author).toBe("teller");
+    expect(list[0].url).toBe("https://www.reddit.com/r/AmItheAsshole/comments/abc123/");
+    // friend picks it and marks permission
+    const u = await friend.call("POST", "/api/stories/abc123", { pick: true, status: "allowed" });
+    expect(u.json.story).toMatchObject({ pickedBy: "bob", status: "allowed" });
+    expect((await b.call("POST", "/api/stories/abc123", { status: "nonsense" })).status).toBe(400);
+    expect((await b.call("POST", "/api/stories/nope99", { status: "new" })).status).toBe(404);
+    await b.call("POST", "/api/stories/def456/delete", {});
+    expect((await b.call("GET", "/api/stories")).json.stories).toHaveLength(1);
+  });
+
+  it("a video made from a story marks the story as queued", async () => {
+    const b = await loggedIn();
+    await b.call("POST", "/api/stories/import", { stories: [story("abc123")] });
+    const credit = { url: "https://www.reddit.com/r/AmItheAsshole/comments/abc123/", author: "teller", permission: true };
+    const c = await b.call("POST", "/api/videos", { pageId: "p1", credit, storyId: "abc123", title: "AITA", description: "", platforms: ["youtube"], fileName: "story.mp4", size: 100, width: 1080, height: 1920, duration: 30 });
+    await b.call("PUT", `/api/videos/${c.json.id}/chunks/0`, undefined, { body: mp4Bytes(100) });
+    await b.call("POST", `/api/videos/${c.json.id}/complete`, {});
+    const s = (await b.call("GET", "/api/stories/abc123")).json.story;
+    expect(s.status).toBe("queued");
+    expect(s.videoIds).toEqual([c.json.id]);
+  });
+
+  it("remembers used background minutes", async () => {
+    const b = await loggedIn();
+    await b.call("POST", "/api/backgrounds/used", { key: "parkour.mp4-123", start: 100, end: 190 });
+    await b.call("POST", "/api/backgrounds/used", { key: "parkour.mp4-123", start: 500, end: 560 });
+    expect((await b.call("GET", "/api/backgrounds/used?key=parkour.mp4-123")).json.ranges).toEqual([[100, 190], [500, 560]]);
+    await b.call("POST", "/api/backgrounds/used", { key: "parkour.mp4-123", clear: true });
+    expect((await b.call("GET", "/api/backgrounds/used?key=parkour.mp4-123")).json.ranges).toEqual([]);
+  });
+});
+
 describe("settings & accounts", () => {
   it("first account sets the timezone from the browser", async () => {
     await loggedIn("alice", "Asia/Amman");

@@ -58,6 +58,8 @@ export interface Video {
   /** Which page this video belongs to (older videos without it belong to p1). */
   pageId?: PageId;
   credit?: Credit | null;
+  /** The story on the Stories board this video was made from. */
+  storyId?: string | null;
   /** Set first when deleting, so the scheduler stops touching it. */
   deleted?: boolean;
   posts: Partial<Record<Platform, Post>>;

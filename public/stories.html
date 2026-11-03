@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stories · Shorts HQ</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js"></script>
+</head>
+<body class="hidden">
+<main>
+  <div id="flash" class="flash hidden"></div>
+  <div class="head">
+    <h1>Stories</h1>
+    <div class="actions">
+      <button class="btn big" id="findBtn">📥 Find stories on Reddit</button>
+      <button class="ghost" id="addBtn">✍️ Add one by hand</button>
+    </div>
+  </div>
+
+  <!-- How to find stories -->
+  <div class="card hidden" id="finder">
+    <b>Find the best stories in 3 steps</b>
+    <ol class="steps">
+      <li><b>Once:</b> drag this button to your bookmarks bar →
+        <a class="btn bookmarklet" id="bookmarklet" href="#" onclick="event.preventDefault();flash('Drag this button to your bookmarks bar (don\'t click it here).', true)">📥 Shorts HQ Finder</a>
+        <div class="muted small">No bookmarks bar? Press <b>Ctrl+Shift+B</b> (Mac: <b>⌘+Shift+B</b>).</div></li>
+      <li>Open <a href="https://www.reddit.com" target="_blank" rel="noopener">reddit.com</a> and make sure you're <b>logged in</b>.</li>
+      <li>Click the <b>📥 Shorts HQ Finder</b> bookmark there. This page opens with the top stories, rated ⭐ — tick the ones you like and save.</li>
+    </ol>
+    <div class="muted small">Tip: on a single Reddit post, the bookmark grabs just that story.</div>
+    <label>Search these subreddits</label>
+    <div id="subs" class="chips"></div>
+    <label for="range">Top stories from the last</label>
+    <select id="range" style="max-width:260px">
+      <option value="day">day</option><option value="week" selected>week</option><option value="month">month</option><option value="year">year</option><option value="all">all time</option>
+    </select>
+  </div>
+
+  <!-- Add by hand -->
+  <div class="card hidden" id="manual">
+    <b>Add a story by hand</b>
+    <form id="manualForm">
+      <label>Link to the Reddit post</label><input id="mUrl" type="text" placeholder="https://www.reddit.com/r/AmItheAsshole/comments/..." required>
+      <div class="grid2">
+        <div><label>Subreddit</label><input id="mSub" type="text" placeholder="AmItheAsshole" required></div>
+        <div><label>Author</label><input id="mAuthor" type="text" placeholder="u/username" required></div>
+      </div>
+      <label>Title</label><input id="mTitle" type="text" required maxlength="300">
+      <label>Story text</label><textarea id="mBody" required style="min-height:180px"></textarea>
+      <div class="grid2">
+        <div><label>Upvotes (optional)</label><input id="mScore" type="text" inputmode="numeric" placeholder="12000"></div>
+        <div><label>Comments (optional)</label><input id="mComments" type="text" inputmode="numeric" placeholder="800"></div>
+      </div>
+      <p><button type="submit">Save story</button></p>
+    </form>
+  </div>
+
+  <!-- Results from Reddit -->
+  <div id="importBox" class="hidden">
+    <h2 id="importTitle">Found stories</h2>
+    <div class="card small" id="importStatus"></div>
+    <div class="actions" style="margin:10px 0 14px">
+      <button id="saveTicked">Save ticked stories</button>
+      <button class="ghost" id="tickTop">Tick the best 10</button>
+      <button class="ghost" id="tickNone">Untick all</button>
+      <select id="lenFilter" style="max-width:220px">
+        <option value="all">All lengths</option><option value="one" selected>Fits in one video</option><option value="parts">Needs parts</option>
+      </select>
+    </div>
+    <div id="importList"></div>
+  </div>
+
+  <!-- Board -->
+  <h2>Your story board <span class="muted small">(shared with your friend)</span></h2>
+  <div class="ptabs" id="statusTabs"></div>
+  <div id="board"></div>
+</main>
+<script type="module">
+import { STORY_SUBREDDITS, isUsablePost, rateStory, stars, formatCount, formatDuration, estimateSeconds, wordCount, cleanStoryText } from "/js/storylib.js";
+
+const $ = (id) => document.getElementById(id);
+const STATUS = { new: "🆕 New", asked: "✉️ Asked author", allowed: "✅ Allowed", made: "🎬 Made", queued: "📅 In queue", skipped: "⏭ Skipped" };
+let BOARD = [], FOUND = [], tab = "open";
+const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
+const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+
+// ---------- finder settings ----------
+let chosenSubs = load("shq-subs", STORY_SUBREDDITS.slice(0, 8));
+function renderSubs() {
+  $("subs").innerHTML = STORY_SUBREDDITS.map((s) => `<label class="chip"><input type="checkbox" value="${s}" ${chosenSubs.includes(s) ? "checked" : ""}> r/${s}</label>`).join("");
+  $("subs").querySelectorAll("input").forEach((i) => i.addEventListener("change", () => {
+    chosenSubs = [...$("subs").querySelectorAll("input:checked")].map((x) => x.value);
+    save("shq-subs", chosenSubs);
+  }));
+}
+$("range").value = load("shq-range", "week");
+$("range").addEventListener("change", () => save("shq-range", $("range").value));
+
+// The bookmark: runs on reddit.com (where you're logged in), reads top posts and sends them here.
+function bookmarkletCode(site) {
+  const code = `(async()=>{const SITE=${JSON.stringify(site)};if(!/(^|\\.)reddit\\.com$/.test(location.hostname)){alert('Open reddit.com first, then click this bookmark again.');return}const w=window.open(SITE+'/stories.html?import=1','shq_import');if(!w){alert('Allow pop-ups for reddit.com, then click again.');return}let cfg=null;const onMsg=e=>{if(e.origin===SITE&&e.data&&e.data.type==='shq-ready')cfg=e.data};window.addEventListener('message',onMsg);for(let i=0;i<120&&!cfg;i++)await new Promise(r=>setTimeout(r,250));if(!cfg){alert('Shorts HQ did not answer. Log in to Shorts HQ, then click the bookmark again.');return}const send=m=>w.postMessage(m,SITE);const pick=p=>({id:p.id,title:p.title,author:p.author,subreddit:p.subreddit,score:p.score,upvote_ratio:p.upvote_ratio,num_comments:p.num_comments,permalink:p.permalink,selftext:p.selftext,over_18:p.over_18,stickied:p.stickied,created_utc:p.created_utc,removed:p.removed_by_category});const get=async u=>{const r=await fetch(u,{credentials:'include'});if(!r.ok)throw new Error('HTTP '+r.status);return r.json()};const posts=[];const errs=[];const one=location.pathname.match(/\\/comments\\/([a-z0-9]+)/i);if(one){try{const j=await get(location.pathname.replace(/\\/$/,'')+'.json?raw_json=1');posts.push(pick(j[0].data.children[0].data))}catch(e){errs.push(e.message)}}else{for(const s of cfg.subs){send({type:'shq-progress',text:'Reading r/'+s+'…'});try{const j=await get('/r/'+s+'/top.json?t='+cfg.t+'&limit=50&raw_json=1');posts.push(...j.data.children.map(c=>pick(c.data)))}catch(e){errs.push('r/'+s+': '+e.message)}}}if(!posts.length){const el=document.querySelector('shreddit-post');if(el){const body=el.querySelector('[slot="text-body"]')||document.querySelector('[slot="text-body"]');posts.push({id:(el.getAttribute('id')||'').replace('t3_',''),title:el.getAttribute('post-title'),author:el.getAttribute('author'),subreddit:(el.getAttribute('subreddit-prefixed-name')||'').replace(/^r\\//,''),score:+el.getAttribute('score')||0,num_comments:+el.getAttribute('comment-count')||0,permalink:el.getAttribute('permalink'),selftext:body?body.innerText:'',created_utc:Date.parse(el.getAttribute('created-timestamp'))/1000||null})}}send({type:'shq-stories',posts,errors:errs,single:!!one})})()`;
+  return "javascript:" + encodeURIComponent(code);
+}
+
+// ---------- receiving stories from the bookmark ----------
+function setStatus(html) { $("importBox").classList.remove("hidden"); $("importStatus").innerHTML = html; }
+
+function receive(posts, errors) {
+  const saved = new Set(BOARD.map((s) => s.id));
+  const seen = new Set();
+  FOUND = posts.filter((p) => p && p.id && !seen.has(p.id) && seen.add(p.id) && isUsablePost(p)).map((p) => {
+    const r = rateStory(p);
+    return { ...p, ...r, saved: saved.has(String(p.id).toLowerCase()) };
+  }).sort((a, b) => b.rating - a.rating);
+  const unusable = posts.length - FOUND.length;
+  setStatus(`Found <b>${FOUND.length}</b> usable stories${unusable > 0 ? ` (${unusable} skipped: links, NSFW, pinned or too short)` : ""}.`
+    + (errors?.length ? `<div class="err">Some subreddits didn't load: ${esc(errors.join(" · "))}</div>` : "")
+    + (posts.length === 0 ? `<div class="err">Reddit didn't return anything. Make sure you're logged in on reddit.com, or open a single story and click the bookmark there.</div>` : ""));
+  // tick the best ones that fit one video and aren't saved yet
+  FOUND.forEach((f, i) => (f.tick = !f.saved && i < 10 && f.estSeconds <= 170));
+  renderFound();
+  $("importBox").scrollIntoView({ behavior: "smooth" });
+}
+
+function renderFound() {
+  const filter = $("lenFilter").value;
+  const list = FOUND.filter((f) => filter === "all" || (filter === "one" ? f.estSeconds <= 170 : f.estSeconds > 170));
+  $("importTitle").textContent = `Found stories (${list.length})`;
+  $("importList").innerHTML = list.map((f) => `
+    <div class="card story ${f.saved ? "dim" : ""}">
+      <label class="check" style="margin:0 0 6px"><input type="checkbox" data-id="${esc(f.id)}" ${f.tick ? "checked" : ""} ${f.saved ? "disabled" : ""}>
+        <span class="stars" title="Rating ${f.rating}/100">${stars(f.rating)}</span> <b>${f.rating}</b>
+        ${f.saved ? '<span class="badge">already saved</span>' : ""}</label>
+      <div class="t">${esc(f.title)}</div>
+      <div class="muted small">r/${esc(f.subreddit)} · u/${esc(f.author)} · ▲ ${formatCount(f.score)} · 💬 ${formatCount(f.num_comments)} · ⏱ ~${formatDuration(f.estSeconds)} (${f.words} words)</div>
+      <div class="dots" style="margin-top:6px">${f.reasons.map((r) => `<span class="d">${esc(r)}</span>`).join("")}</div>
+      <details><summary>Read the story</summary><div class="storytext">${esc(f.selftext)}</div></details>
+    </div>`).join("") || `<div class="empty">Nothing here. Try another length filter or other subreddits.</div>`;
+  $("importList").querySelectorAll("input[data-id]").forEach((c) => c.addEventListener("change", () => {
+    const f = FOUND.find((x) => String(x.id) === c.dataset.id);
+    if (f) f.tick = c.checked;
+    updateSaveBtn();
+  }));
+  updateSaveBtn();
+}
+const updateSaveBtn = () => { $("saveTicked").textContent = `Save ticked stories (${FOUND.filter((f) => f.tick).length})`; };
+$("lenFilter").addEventListener("change", renderFound);
+$("tickTop").addEventListener("click", () => { let n = 0; FOUND.forEach((f) => (f.tick = !f.saved && n < 10 && ++n > 0)); renderFound(); });
+$("tickNone").addEventListener("click", () => { FOUND.forEach((f) => (f.tick = false)); renderFound(); });
+$("saveTicked").addEventListener("click", async () => {
+  const ticked = FOUND.filter((f) => f.tick);
+  if (!ticked.length) return flash("Tick at least one story.", true);
+  const r = await api("/api/stories/import", { json: { stories: ticked.map((f) => ({
+    id: String(f.id).toLowerCase(), subreddit: f.subreddit, author: f.author, title: f.title, body: f.selftext,
+    url: f.permalink ? "https://www.reddit.com" + f.permalink : "", score: f.score, comments: f.num_comments,
+    rating: f.rating, reasons: f.reasons, createdUtc: f.created_utc,
+  })) } });
+  flash(r.ok ? r.data.message : r.data.error || "Could not save.", !r.ok);
+  if (r.ok) { FOUND.forEach((f) => { if (f.tick) { f.saved = true; f.tick = false; } }); renderFound(); await loadBoard(); }
+});
+
+window.addEventListener("message", (e) => {
+  if (!/^https:\/\/([a-z]+\.)?reddit\.com$/.test(e.origin) || !e.data || typeof e.data !== "object") return;
+  if (e.data.type === "shq-progress") setStatus(esc(e.data.text));
+  if (e.data.type === "shq-stories" && Array.isArray(e.data.posts)) receive(e.data.posts.slice(0, 1000), e.data.errors || []);
+});
+
+// ---------- add by hand ----------
+$("manualForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const url = $("mUrl").value.trim();
+  const m = url.match(/\/comments\/([a-z0-9]+)/i);
+  const body = $("mBody").value.trim();
+  const p = { id: m ? m[1].toLowerCase() : "m_" + Math.random().toString(36).slice(2, 10), title: $("mTitle").value.trim(), selftext: body,
+    subreddit: $("mSub").value.trim().replace(/^\/?r\//i, ""), author: $("mAuthor").value.trim().replace(/^\/?u\//i, ""),
+    score: Number($("mScore").value.replace(/\D/g, "")) || 0, num_comments: Number($("mComments").value.replace(/\D/g, "")) || 0 };
+  if (!/reddit\.com\/r\//i.test(url)) return flash("Paste the link to the Reddit post (https://www.reddit.com/r/...).", true);
+  if (wordCount(body) < 30) return flash("The story text is too short.", true);
+  const r0 = rateStory(p);
+  const r = await api("/api/stories/import", { json: { stories: [{ id: p.id, subreddit: p.subreddit, author: p.author, title: p.title, body, url, score: p.score, comments: p.num_comments, rating: r0.rating, reasons: r0.reasons }] } });
+  flash(r.ok ? r.data.message : r.data.error || "Could not save.", !r.ok);
+  if (r.ok) { e.target.reset(); $("manual").classList.add("hidden"); loadBoard(); }
+});
+
+// ---------- the board ----------
+async function loadBoard() {
+  const r = await api("/api/stories");
+  if (!r.ok) return;
+  BOARD = r.data.stories;
+  renderBoard();
+}
+
+function askLink(s) {
+  const subject = "Can we narrate your story?";
+  const msg = `Hi u/${s.author}! We loved your post "${s.title}" in r/${s.subreddit}. Could we read it out in a short video on our YouTube and Instagram channel? We'd credit you and link your post. If you'd rather not, no problem at all. Thank you!`;
+  return `https://www.reddit.com/message/compose/?to=${encodeURIComponent(s.author)}&subject=${encodeURIComponent(subject)}&message=${encodeURIComponent(msg)}`;
+}
+
+function renderBoard() {
+  const counts = { open: BOARD.filter((s) => !["queued", "skipped"].includes(s.status)).length };
+  for (const k of Object.keys(STATUS)) counts[k] = BOARD.filter((s) => s.status === k).length;
+  const tabs = [["open", "To do"], ...Object.entries(STATUS)];
+  $("statusTabs").innerHTML = tabs.map(([k, label]) => `<button class="${k === tab ? "on" : ""}" data-tab="${k}">${label} <span class="count">${counts[k] || 0}</span></button>`).join("");
+  $("statusTabs").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { tab = b.dataset.tab; renderBoard(); }));
+  const list = BOARD.filter((s) => (tab === "open" ? !["queued", "skipped"].includes(s.status) : s.status === tab));
+  $("board").innerHTML = list.map((s) => {
+    const secs = estimateSeconds(wordCount(cleanStoryText(s.body)));
+    return `<div class="card story">
+      <div class="storyhead"><span class="stars">${stars(s.rating)}</span> <b>${s.rating}</b> <span class="badge">${STATUS[s.status]}</span>
+        ${s.pickedBy ? `<span class="badge">🙋 ${esc(s.pickedBy)} is on it</span>` : ""}</div>
+      <div class="t">${esc(s.title)}</div>
+      <div class="muted small">r/${esc(s.subreddit)} · u/${esc(s.author)} · ▲ ${formatCount(s.score)} · 💬 ${formatCount(s.comments)} · ⏱ ~${formatDuration(secs)}${secs > 170 ? ` · ${Math.ceil(secs / 160)} parts` : ""} · added by ${esc(s.addedBy)}</div>
+      <details><summary>Read the story</summary><div class="storytext">${esc(s.body)}</div></details>
+      <div class="actions" style="margin-top:10px">
+        <a class="btn" href="/maker.html?story=${encodeURIComponent(s.id)}">🎬 Make video</a>
+        ${s.status === "new" ? `<a class="btn ghost" href="${esc(askLink(s))}" target="_blank" rel="noopener" data-act="asked" data-id="${esc(s.id)}">✉️ Ask the author</a>` : ""}
+        ${["new", "asked"].includes(s.status) ? `<button class="ghost" data-act="allowed" data-id="${esc(s.id)}">✅ Author said yes</button>` : ""}
+        ${s.pickedBy ? `<button class="ghost" data-act="unpick" data-id="${esc(s.id)}">Release</button>` : `<button class="ghost" data-act="pick" data-id="${esc(s.id)}">🙋 I'll do it</button>`}
+        ${s.status === "skipped" ? `<button class="ghost" data-act="new" data-id="${esc(s.id)}">Bring back</button>` : `<button class="ghost" data-act="skipped" data-id="${esc(s.id)}">Skip</button>`}
+        ${s.url ? `<a class="btn ghost" href="${esc(s.url)}" target="_blank" rel="noopener">Open on Reddit</a>` : ""}
+        <button class="icon" title="Delete" data-act="delete" data-id="${esc(s.id)}">🗑</button>
+      </div>
+    </div>`;
+  }).join("") || `<div class="empty">${tab === "open" ? "No stories yet. Click <b>📥 Find stories on Reddit</b> above." : "Nothing here."}</div>`;
+  $("board").querySelectorAll("[data-act]").forEach((el) => el.addEventListener("click", async (e) => {
+    const { act, id } = el.dataset;
+    if (act !== "asked") e.preventDefault();
+    if (act === "delete" && !confirm("Remove this story from the board?")) return;
+    const path = act === "delete" ? `/api/stories/${id}/delete` : `/api/stories/${id}`;
+    const data = act === "pick" ? { pick: true } : act === "unpick" ? { pick: false } : act === "delete" ? {} : { status: act };
+    const r = await api(path, { json: data });
+    if (!r.ok) flash(r.data.error || "Something went wrong.", true);
+    else if (act === "allowed") flash("Great! You can make the video now.", false);
+    await loadBoard();
+  }));
+}
+
+// ---------- start ----------
+$("findBtn").addEventListener("click", () => { $("finder").classList.toggle("hidden"); $("manual").classList.add("hidden"); });
+$("addBtn").addEventListener("click", () => { $("manual").classList.toggle("hidden"); $("finder").classList.add("hidden"); });
+const importMode = new URLSearchParams(location.search).has("import");
+(async () => {
+  const me = await api("/api/me");
+  if (!me.data.user) {
+    if (importMode) {
+      document.body.classList.remove("hidden");
+      document.querySelector("main").innerHTML = `<div class="auth card"><h1 style="font-size:22px">Log in first</h1><p>Open Shorts HQ in a normal tab, log in, then click the bookmark on Reddit again.</p><p><a class="btn" href="/login.html" target="_blank">Log in</a></p></div>`;
+      return;
+    }
+    return requireUser();
+  }
+  await requireUser();
+  showUrlMessages();
+  renderSubs();
+  $("bookmarklet").href = bookmarkletCode(location.origin);
+  await loadBoard();
+  if (importMode) {
+    setStatus("Waiting for Reddit…");
+    if (window.opener) window.opener.postMessage({ type: "shq-ready", subs: chosenSubs.length ? chosenSubs : STORY_SUBREDDITS.slice(0, 6), t: $("range").value }, "*");
+    else setStatus("Open this from the 📥 Shorts HQ Finder bookmark on reddit.com.");
+  }
+})();
+</script>
+</body>
+</html>

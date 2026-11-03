@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Make video · Shorts HQ</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js"></script>
+</head>
+<body class="hidden">
+<main>
+  <div id="flash" class="flash hidden"></div>
+  <div class="head"><h1>🎬 Make a video</h1><a class="btn ghost" href="/stories.html">← Stories</a></div>
+  <div id="support" class="banner hidden"></div>
+
+  <div class="maker">
+    <div>
+      <!-- 1. Story -->
+      <div class="card">
+        <b>1. The story</b> <span class="muted small" id="storyMeta"></span>
+        <label for="title">Title (read first, shown on the Reddit card)</label>
+        <input id="title" type="text" maxlength="300">
+        <label for="body">Story text (what the voice reads — edit freely: cut boring parts, fix typos)</label>
+        <textarea id="body" style="min-height:260px"></textarea>
+        <div class="check"><input type="checkbox" id="censor" checked> <label for="censor">Replace swear words (better for YouTube money)</label></div>
+        <div class="muted small" id="lengthInfo"></div>
+      </div>
+
+      <!-- 2. Voice -->
+      <div class="card">
+        <b>2. The voice</b>
+        <div class="grid2">
+          <div><label for="voice">Voice</label><select id="voice"></select></div>
+          <div><label for="speed">Speed: <span id="speedVal">1.1</span>×</label><input id="speed" type="range" min="0.85" max="1.4" step="0.05" value="1.1"></div>
+        </div>
+        <p><button class="ghost" id="testVoice">▶ Test the voice</button> <span class="muted small" id="voiceNote">The first time, the voice downloads (~90 MB). After that it's instant.</span></p>
+      </div>
+
+      <!-- 3. Background -->
+      <div class="card">
+        <b>3. Background video</b>
+        <div class="muted small">Choose a long gameplay video (for example 2 hours of Minecraft parkour) once. Every video takes a different random part of it, exactly as long as the story. The big file stays on your computer.</div>
+        <div id="bgList" class="bglist"></div>
+        <p><button class="ghost" id="addBg">＋ Add a background video</button></p>
+      </div>
+    </div>
+
+    <div>
+      <!-- 4. Post -->
+      <div class="card">
+        <b>4. Posting</b>
+        <label for="page">Page</label><select id="page"></select>
+        <label for="desc">Caption</label>
+        <textarea id="desc" style="min-height:90px">What would you have done? 👇</textarea>
+        <div class="muted small">The story credit and the page's saved hashtags are added automatically.</div>
+        <div class="check" style="margin-top:10px"><input type="checkbox" id="yt" checked> <label for="yt">YouTube Shorts</label></div>
+        <div class="check"><input type="checkbox" id="ig" checked> <label for="ig">Instagram Reels</label></div>
+        <div class="check" id="permRow"><input type="checkbox" id="perm"> <label for="perm">The author said yes to us using this story</label></div>
+      </div>
+
+      <!-- 5. Make -->
+      <div class="card">
+        <b>5. Make it</b>
+        <p><button class="big" id="make">🎬 Make the video</button> <button class="ghost hidden" id="stop">Stop</button></p>
+        <div class="progress" id="pb"><div></div></div>
+        <div id="status" class="small muted">Keep this tab open while it works (about as long as the video).</div>
+        <canvas id="preview" width="270" height="480" class="previewCanvas"></canvas>
+      </div>
+
+      <div id="results"></div>
+    </div>
+  </div>
+</main>
+<script type="module">
+import { cleanStoryText, splitIntoParts, wordCount, estimateSeconds, formatDuration, videoTitle, chooseSegment, MAX_PART_SECONDS, splitSentences } from "/js/storylib.js";
+import { VOICES, narrate, loadVoice } from "/js/tts.js";
+import { checkSupport, loadBackground, renderVideo, drawCard, W, H } from "/js/render.js";
+import { listBackgrounds, addBackground, openBackground, removeBackground, canRemember } from "/js/bglib.js";
+
+const $ = (id) => document.getElementById(id);
+const params = new URLSearchParams(location.search);
+let STORY = null, PAGES = [], SUPPORT = null, BG = null, abort = null;
+const pref = (k, d) => { try { return localStorage.getItem("shq-" + k) ?? d; } catch { return d; } };
+const setPref = (k, v) => { try { localStorage.setItem("shq-" + k, v); } catch {} };
+
+// ---------- story ----------
+function refreshText() {
+  if (!STORY) return;
+  $("body").value = cleanStoryText(STORY.body, { censor: $("censor").checked });
+  updateLength();
+}
+function updateLength() {
+  const speed = Number($("speed").value);
+  const words = wordCount($("body").value);
+  const parts = splitIntoParts($("body").value, { speed });
+  const secs = estimateSeconds(words, speed) + 6;
+  $("lengthInfo").innerHTML = `⏱ About <b>${formatDuration(secs)}</b> (${words} words)` + (parts.length > 1 ? ` → <b>${parts.length} parts</b> of about ${formatDuration(secs / parts.length)} each (Shorts can be at most 3 minutes).` : " — fits in one video.");
+}
+$("censor").addEventListener("change", refreshText);
+$("body").addEventListener("input", updateLength);
+
+// ---------- voice ----------
+$("voice").innerHTML = VOICES.map(([id, name]) => `<option value="${id}">${name}</option>`).join("");
+$("voice").value = pref("voice", "af_heart");
+$("speed").value = pref("speed", "1.1");
+$("speedVal").textContent = $("speed").value;
+$("voice").addEventListener("change", () => setPref("voice", $("voice").value));
+$("speed").addEventListener("input", () => { $("speedVal").textContent = $("speed").value; setPref("speed", $("speed").value); updateLength(); });
+$("testVoice").addEventListener("click", async () => {
+  try {
+    $("testVoice").disabled = true;
+    const n = await narrate({ title: "", body: $("title").value || "This is how the story will sound.", voice: $("voice").value, speed: Number($("speed").value), onProgress: (p, t) => ($("voiceNote").textContent = t) });
+    const ctx = new AudioContext();
+    const buf = ctx.createBuffer(1, n.samples.length, n.sampleRate);
+    buf.copyToChannel(n.samples, 0);
+    const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination); src.start();
+    $("voiceNote").textContent = "Playing…";
+  } catch (e) { flash(e.message, true); }
+  finally { $("testVoice").disabled = false; }
+});
+
+// ---------- background ----------
+async function usedRanges(key) { const r = await api("/api/backgrounds/used?key=" + encodeURIComponent(key)); return r.ok ? r.data.ranges : []; }
+async function renderBgList() {
+  const items = await listBackgrounds();
+  if (BG && !items.find((i) => i.key === BG.key)) items.unshift(BG); // chosen this time only (browser can't remember)
+  const chosen = pref("bg", items[0]?.key || "");
+  const rows = [];
+  for (const it of items) {
+    const used = await usedRanges(it.key);
+    const usedMin = Math.round(used.reduce((n, [a, b]) => n + (b - a), 0) / 60);
+    rows.push(`<label class="bgrow"><input type="radio" name="bg" value="${esc(it.key)}" ${it.key === chosen ? "checked" : ""}>
+      <span><b>${esc(it.name)}</b><br><span class="muted small">${it.size >= 1e9 ? (it.size / 1e9).toFixed(1) + " GB" : Math.round(it.size / 1e6) + " MB"} · ${usedMin} min already used</span></span>
+      <span class="grow"></span>
+      <button class="link" type="button" data-reset="${esc(it.key)}">Reset used</button>
+      ${it.handle ? `<button class="link" type="button" data-remove="${esc(it.key)}">Remove</button>` : ""}</label>`);
+  }
+  $("bgList").innerHTML = rows.join("") || `<div class="empty small">No background yet. Add a long gameplay video (MP4).</div>`;
+  $("bgList").querySelectorAll("input[name=bg]").forEach((r) => r.addEventListener("change", () => setPref("bg", r.value)));
+  $("bgList").querySelectorAll("[data-reset]").forEach((b) => b.addEventListener("click", async (e) => { e.preventDefault(); await api("/api/backgrounds/used", { json: { key: b.dataset.reset, clear: true } }); renderBgList(); }));
+  $("bgList").querySelectorAll("[data-remove]").forEach((b) => b.addEventListener("click", async (e) => { e.preventDefault(); await removeBackground(b.dataset.remove); renderBgList(); }));
+}
+$("addBg").addEventListener("click", async () => {
+  try {
+    const item = await addBackground();
+    BG = item; setPref("bg", item.key);
+    if (!canRemember()) flash("This browser can't remember the file; you'll choose it again next time. Chrome or Edge remember it.", false);
+    await renderBgList();
+  } catch (e) { if (e.name !== "AbortError") flash(e.message, true); }
+});
+async function chosenBackground() {
+  const key = (document.querySelector("input[name=bg]:checked") || {}).value;
+  if (!key) throw new Error("Add a background video first (step 3).");
+  const items = await listBackgrounds();
+  const item = items.find((i) => i.key === key) || (BG && BG.key === key ? BG : null);
+  if (!item) throw new Error("Choose the background video again.");
+  return { key, file: await openBackground(item) };
+}
+
+// ---------- making ----------
+const progress = (p, t) => { $("pb").style.display = "block"; $("pb").firstElementChild.style.width = p + "%"; $("status").textContent = t; };
+
+/**
+ * Record the voice for every part. Long stories become Part 1, Part 2… (each part announces its number,
+ * and ends with "Follow for part N"). If a part comes out longer than Shorts allow, it is split and redone.
+ */
+async function recordParts(title, text, voice, speed) {
+  let texts = splitIntoParts(text, { speed });
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const total = texts.length, out = [];
+    let tooLong = -1;
+    for (let i = 0; i < total; i++) {
+      const n = await narrate({
+        title: total > 1 ? `${title}. Part ${i + 1}.` : title,
+        body: texts[i] + (i < total - 1 ? ` Follow for part ${i + 2}!` : ""),
+        voice, speed,
+        onProgress: (p, t) => progress(Math.round(((i + p / 100) / total) * 30), total > 1 ? `Part ${i + 1}/${total}: ${t}` : t),
+      });
+      if (n.duration > MAX_PART_SECONDS + 7) { tooLong = i; break; }
+      out.push({ n, text: texts[i] });
+    }
+    if (tooLong < 0) return out;
+    // The voice read slower than expected: split the whole story again into even, shorter parts.
+    texts = splitIntoParts(text, { speed, maxSeconds: MAX_PART_SECONDS - 15 * (attempt + 1) });
+    if (texts.length <= total) texts = splitIntoParts(text, { speed, maxSeconds: Math.floor((MAX_PART_SECONDS * total) / (total + 1)) });
+    progress(0, "A part came out too long — splitting the story again and recording…");
+  }
+  throw new Error("This story is too long to split well. Shorten the text and try again.");
+}
+
+async function make() {
+  if (!SUPPORT?.ok) return flash(SUPPORT?.reason || "This browser can't make videos.", true);
+  const title = $("title").value.trim(), text = $("body").value.trim();
+  if (!title || wordCount(text) < 20) return flash("Write a title and the story text first.", true);
+  let bgInfo;
+  try { bgInfo = await chosenBackground(); } catch (e) { return flash(e.message, true); }
+  $("make").disabled = true; $("stop").classList.remove("hidden"); $("results").innerHTML = "";
+  abort = new AbortController();
+  const voice = $("voice").value, speed = Number($("speed").value);
+  try {
+    const bg = await loadBackground(bgInfo.file);
+    if (bg.duration < 30) throw new Error("This background video is too short. Use a long one (10 minutes or more).");
+    const narrated = await recordParts(title, text, voice, speed);
+    const total = narrated.length;
+    const used = await usedRanges(bgInfo.key);
+    for (let i = 0; i < total; i++) {
+      const { n } = narrated[i];
+      const seg = chooseSegment(bg.duration, n.duration + 1, used);
+      if (seg.reused) flash("All of this background has been used once. Parts will repeat — add another background or reset it.", false);
+      const res = await renderVideo({
+        bg, bgStart: seg.start, narration: n, support: SUPPORT, signal: abort.signal,
+        card: { subreddit: STORY.subreddit, author: STORY.author, title, score: STORY.score, comments: STORY.comments },
+        partLabel: total > 1 ? `Part ${i + 1}` : "",
+        onProgress: (p, t) => progress(30 + Math.round((70 * (i + p / 100)) / total), total > 1 ? `Part ${i + 1}/${total}: ${t}` : t),
+      });
+      used.push([seg.start, seg.start + n.duration + 1]);
+      await api("/api/backgrounds/used", { json: { key: bgInfo.key, start: seg.start, end: seg.start + n.duration + 1 } });
+      addResult({ ...res, part: i + 1, total, title: videoTitle(title, i + 1, total) });
+    }
+    progress(100, total > 1 ? `Done! ${total} parts are ready below.` : "Done! Your video is ready below.");
+    if (STORY.status !== "queued") await api(`/api/stories/${STORY.id}`, { json: { status: "made" } });
+    renderBgList();
+  } catch (e) {
+    flash(e.message || String(e), true);
+    progress(0, "Stopped.");
+  } finally {
+    $("make").disabled = false; $("stop").classList.add("hidden");
+  }
+}
+$("make").addEventListener("click", make);
+$("stop").addEventListener("click", () => abort?.abort());
+
+const RESULTS = [];
+function addResult(r) {
+  RESULTS.push(r);
+  const i = RESULTS.length - 1;
+  const url = URL.createObjectURL(r.blob);
+  const el = document.createElement("div");
+  el.className = "card result";
+  el.innerHTML = `<b>${esc(r.title)}</b> <span class="muted small">${formatDuration(r.duration)} · ${(r.blob.size / 1e6).toFixed(1)} MB</span>
+    <video src="${url}" controls playsinline></video>
+    <div class="actions"><button data-q="${i}">📅 Add to queue</button>
+    <a class="btn ghost" href="${url}" download="${esc(r.title.replace(/[^\w\- ]+/g, "").trim() || "video")}.mp4">⬇ Download</a></div>
+    <div class="small muted" data-s="${i}"></div>`;
+  $("results").appendChild(el);
+  el.querySelector("[data-q]").addEventListener("click", (e) => addToQueue(i, e.target));
+}
+
+async function addToQueue(i, btn) {
+  const r = RESULTS[i];
+  const pageId = $("page").value;
+  const page = PAGES.find((p) => p.id === pageId);
+  const platforms = [$("yt").checked && "youtube", $("ig").checked && "instagram"].filter(Boolean);
+  if (!platforms.length) return flash("Choose YouTube and/or Instagram (step 4).", true);
+  if (page?.needsCredit && !$("perm").checked) return flash("Tick “The author said yes” in step 4 before adding a Reddit story to the queue.", true);
+  const status = document.querySelector(`[data-s="${i}"]`);
+  btn.disabled = true;
+  try {
+    if (page?.needsCredit) await api(`/api/stories/${STORY.id}`, { json: { status: "allowed" } });
+    await uploadVideoBlob(r.blob, {
+      pageId, title: r.title, description: $("desc").value, platforms, storyId: STORY.id,
+      credit: page?.needsCredit ? { url: STORY.url, author: STORY.author, permission: true } : null,
+      width: W, height: H, duration: r.duration, thumbnail: r.thumbnail, fileName: "story.mp4",
+    }, (p) => (status.textContent = `Uploading… ${p}%`));
+    status.innerHTML = `✅ Added to the queue. <a href="/">See the queue</a>`;
+    btn.textContent = "✓ In the queue";
+  } catch (e) {
+    status.textContent = "";
+    flash(e.message, true);
+    btn.disabled = false;
+  }
+}
+
+// ---------- start ----------
+(async () => {
+  if (!(await requireUser())) return;
+  SUPPORT = await checkSupport();
+  if (!SUPPORT.ok) { $("support").textContent = "⚠ " + SUPPORT.reason; $("support").classList.remove("hidden"); }
+  else if (SUPPORT.muxCodec !== "aac") { $("support").textContent = "⚠ This browser can't make AAC sound, so Instagram may reject these videos. Use Chrome or Edge on Windows or Mac for best results."; $("support").classList.remove("hidden"); }
+  const id = params.get("story");
+  const [s, d] = await Promise.all([id ? api("/api/stories/" + encodeURIComponent(id)) : Promise.resolve({ ok: false, data: { error: "Pick a story on the Stories page first." } }), api("/api/dashboard")]);
+  if (!s.ok) { flash(s.data.error || "Story not found.", true); $("make").disabled = true; return; }
+  STORY = s.data.story;
+  PAGES = d.ok ? d.data.pages : [];
+  $("page").innerHTML = PAGES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+  $("page").value = PAGES.find((p) => p.needsCredit)?.id || PAGES[0]?.id;
+  const syncPerm = () => $("permRow").classList.toggle("hidden", !PAGES.find((p) => p.id === $("page").value)?.needsCredit);
+  $("page").addEventListener("change", syncPerm); syncPerm();
+  $("perm").checked = ["allowed", "made", "queued"].includes(STORY.status);
+  $("title").value = STORY.title;
+  $("storyMeta").textContent = `· r/${STORY.subreddit} · u/${STORY.author}`;
+  refreshText();
+  await renderBgList();
+  // live preview of the Reddit card
+  const pc = $("preview").getContext("2d");
+  const drawPreview = () => {
+    const c = document.createElement("canvas"); c.width = W; c.height = H;
+    const x = c.getContext("2d");
+    const g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "#2a1b4a"); g.addColorStop(1, "#10202a");
+    x.fillStyle = g; x.fillRect(0, 0, W, H);
+    drawCard(x, { subreddit: STORY.subreddit, author: STORY.author, title: $("title").value || STORY.title, score: STORY.score, comments: STORY.comments });
+    pc.drawImage(c, 0, 0, 270, 480);
+  };
+  drawPreview();
+  $("title").addEventListener("input", drawPreview);
+})();
+</script>
+</body>
+</html>

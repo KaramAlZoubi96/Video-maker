@@ -3,6 +3,8 @@
 A private website for you and your friend: upload a vertical video, and it posts itself to
 **YouTube Shorts** and **Instagram Reels** at the times you choose. Runs on Netlify, so your computer can be off.
 
+- 🎬 **Reddit story video maker**: find top stories (rated ⭐), free AI voice, Reddit card + word-by-word captions,
+  random clip from your long background video, auto Part 1/2 for long stories → [docs/MAKE_VIDEOS.md](docs/MAKE_VIDEOS.md)
 - 📺 **2 pages** (Reddit Stories + Dreamcore): each page has its own YouTube channel, Instagram account and posting times
 - 📖 Reddit Stories page asks for the story link, author and permission, and credits the author in the caption
 - #️⃣ Saved hashtags per page, added to every video automatically
@@ -44,7 +46,7 @@ scripts/local-server.mts   run the site on your computer for testing
 ## For developers
 ```bash
 npm install
-npm test            # 65 tests
+npm test            # 77 tests
 npm run typecheck
 # Try it locally with fake YouTube/Instagram (no accounts needed), then open http://localhost:8888
 MOCK_PLATFORMS=1 GOOGLE_CLIENT_ID=x GOOGLE_CLIENT_SECRET=x node --experimental-strip-types scripts/local-server.mts

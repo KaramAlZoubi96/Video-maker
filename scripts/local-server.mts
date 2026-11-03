@@ -16,7 +16,7 @@ setKV(new MemoryKV());
 const PORT = Number(process.env.PORT || 8888);
 process.env.URL ||= `http://localhost:${PORT}`;
 const PUBLIC = new URL("../public/", import.meta.url).pathname;
-const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css" };
+const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".txt": "text/plain" };
 
 if (process.env.MOCK_PLATFORMS) {
   const realFetch = globalThis.fetch;

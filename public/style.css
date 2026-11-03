@@ -165,3 +165,24 @@ button:disabled { opacity: .4; cursor: default; }
 .trow { display: grid; grid-template-columns: 70px 1fr 120px; gap: 10px; align-items: center; padding: 3px 0; }
 .trow .bar { height: 8px; background: var(--card-2); border-radius: 99px; overflow: hidden; }
 .trow .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent-1), var(--accent-2)); }
+
+/* ---- stories & maker --------------------------------------------------- */
+.steps { padding-left: 20px; }
+.steps li { margin: 10px 0; }
+.bookmarklet { cursor: grab; margin: 6px 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { display: inline-flex; gap: 6px; align-items: center; margin: 0; padding: 6px 12px; border-radius: 99px; background: var(--card-2); border: 1px solid var(--line); font-weight: 500; font-size: 13px; cursor: pointer; }
+.chip input { accent-color: var(--accent-2); }
+.story .t { font-weight: 700; font-size: 16px; margin: 4px 0; overflow-wrap: anywhere; }
+.story.dim { opacity: .55; }
+.storyhead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.stars { color: #fbbf24; letter-spacing: 1px; }
+.storytext { white-space: pre-wrap; margin-top: 8px; padding: 12px; border-radius: 10px; background: var(--card-2); font-size: 14px; max-height: 360px; overflow: auto; }
+.maker { display: grid; grid-template-columns: 1.3fr 1fr; gap: 14px; align-items: start; }
+@media (max-width: 1000px) { .maker { grid-template-columns: 1fr; } }
+.bglist { margin-top: 10px; }
+.bgrow { display: flex; gap: 10px; align-items: center; padding: 10px; border: 1px solid var(--line); border-radius: 12px; margin: 0 0 8px; font-weight: 500; cursor: pointer; flex-wrap: wrap; }
+.bgrow .grow { flex: 1; }
+.bgrow input { accent-color: var(--accent-2); }
+.previewCanvas { display: block; margin: 12px auto 0; border-radius: 12px; border: 1px solid var(--line); width: 180px; height: 320px; }
+.result video { width: 100%; max-height: 480px; border-radius: 12px; background: #000; margin: 10px 0; }

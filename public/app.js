@@ -34,13 +34,14 @@ function fmtDate(iso, tz) {
 
 const NAV = [
   ["/", "🎬", "Queue"],
+  ["/stories.html", "📖", "Stories"],
   ["/upload.html", "⬆", "Upload"],
   ["/settings.html", "⚙", "Settings"],
 ];
 
 /** Draws the sidebar (computer) and top bar + bottom tabs (phone) around <main>. */
 function shell(user) {
-  const here = location.pathname === "/index.html" ? "/" : location.pathname;
+  const here = location.pathname === "/index.html" ? "/" : location.pathname === "/maker.html" ? "/stories.html" : location.pathname;
   const links = NAV.map(([href, icon, label]) => `<a href="${href}" class="${href === here ? "on" : ""}"><b>${icon}</b> ${label}</a>`).join("");
   const logo = `<a class="logo" href="/"><i>●</i> <span>SHORTS HQ</span></a>`;
   const main = document.querySelector("main");
@@ -70,4 +71,45 @@ function showUrlMessages() {
   if (p.get("msg")) flash(p.get("msg"), false);
   if (p.get("error")) flash(p.get("error"), true);
   if (p.get("msg") || p.get("error")) history.replaceState(null, "", location.pathname);
+}
+
+/**
+ * Send a finished video file to the website in 4 MB pieces and add it to the queue.
+ * info: { pageId, title, description, platforms, credit, storyId, width, height, duration, thumbnail, fileName }
+ * Returns the new video id. Throws an Error with a readable message.
+ */
+async function uploadVideoBlob(blob, info, onProgress = () => {}) {
+  const payload = { ...info, size: blob.size, fileName: info.fileName || "video.mp4" };
+  let c = await api("/api/videos", { json: payload });
+  if (!c.ok && c.data.duplicate) {
+    if (!confirm(c.data.error)) throw new Error("Cancelled. This video is already in the queue.");
+    c = await api("/api/videos", { json: { ...payload, allowDuplicate: true } });
+  }
+  if (!c.ok) throw new Error(c.data.error || "Could not start the upload.");
+  const { id, chunkSize, chunkCount } = c.data;
+  const send = async (n) => {
+    const part = blob.slice(n * chunkSize, Math.min(blob.size, (n + 1) * chunkSize));
+    for (let attempt = 1; ; attempt++) {
+      const r = await api(`/api/videos/${id}/chunks/${n}`, { method: "PUT", body: part });
+      if (r.ok) return;
+      if (r.status === 400 || r.status === 404 || attempt >= 6) throw new Error(r.data.error || "Upload failed. Please try again.");
+      await new Promise((res) => setTimeout(res, 1000 * 2 ** attempt));
+    }
+  };
+  let done = 0, next = 0;
+  const worker = async () => {
+    while (next < chunkCount) {
+      const n = next++;
+      await send(n);
+      onProgress(Math.round((++done / chunkCount) * 100));
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  for (let i = 0; i < 3; i++) {
+    const f = await api(`/api/videos/${id}/complete`, { json: {} });
+    if (f.ok) return id;
+    if (f.status !== 409) throw new Error(f.data.error || "Could not finish the upload.");
+    for (const n of f.data.missing || []) await send(n);
+  }
+  throw new Error("Upload could not be completed. Please try again.");
 }

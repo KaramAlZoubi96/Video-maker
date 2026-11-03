@@ -17,6 +17,12 @@ simple English. Do the work end to end and report plainly what changed.
 - Queue per page; at each slot the top video is released; "Post now" releases immediately.
 - Views/likes refreshed every 3 h for 30 days; videos finished >35 days ago are archived and their numbers
   kept in `pagestats/{page}`.
+- Stories board (`stories/{id}` in Blobs) + browser **Video Maker**: stories are found by a bookmarklet that runs on
+  reddit.com (Reddit blocks unauthenticated API access since 2026; logged-in same-origin fetch still works), rated in
+  the browser, saved to the board. Videos are made **in the browser**: Kokoro TTS (`public/vendor/kokoro.web.js`,
+  model from Hugging Face, ~90 MB cached), canvas drawing, WebCodecs H.264 + AAC (Opus fallback), `mp4-muxer`.
+  Background clips come from a local file (File System Access handle in IndexedDB); used minutes are stored in
+  `bgused/{key}` so clips don't repeat.
 
 ## Code map
 - `netlify/functions/api.mts` → `netlify/lib/api.mts` (all `/api/*` routes)
@@ -25,6 +31,9 @@ simple English. Do the work end to end and report plainly what changed.
   rupload → poll → publish; checks `PUBLISHED` before publishing again), `tokens.mts` (OAuth + refresh per page),
   `stats.mts`, `auth.mts` (bcrypt + HMAC cookie, origin check), `store.mts` (Netlify Blobs, ETag-safe `update()`),
   `time.mts` (slots in the user's timezone), `types.mts` (data model + limits).
+- Story/video maker: `public/stories.html` (finder bookmarklet + board), `public/maker.html`, `public/js/storylib.js`
+  (rating, text cleanup, parts, caption timing, clip choice — unit tested), `tts.js`, `render.js`, `bglib.js`;
+  server side `netlify/lib/stories.mts`.
 - Frontend: plain HTML/JS in `public/`; shared helpers + layout in `public/app.js`; all colors in the THEME block
   at the top of `public/style.css` (current design: "Dark"; the owner may ask to switch to "Clean" or "Playful").
 
