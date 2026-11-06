@@ -8,8 +8,9 @@ simple English. Do the work end to end and report plainly what changed.
 - Hosting: **Netlify**, deployed from this GitHub repo, branch `main`.
 - Netlify runs `npm test` before every deploy (see `netlify.toml`). If tests fail, the live site stays as it was.
 - So: make the change → `npm test` passes → commit → push to `main`. No zips, no manual uploads.
-- **Deploy only when the owner says "update"** (a Netlify deploy, or a push to `main` once Netlify is linked to
-  GitHub): each deploy uses Netlify free-plan credits. Until then, commit changes and keep them ready.
+- **Deploys need the owner's OK** (a Netlify deploy, or a push to `main` once Netlify is linked to GitHub): each
+  deploy uses Netlify free-plan credits. When changes are ready, ask "Shall I update the website?" and deploy only
+  after a yes (or when the owner says "update"). Group changes into few deploys.
 - `deploy.bat` / `deploy.command` are a backup for deploying from the owner's PC with the Netlify CLI.
 
 ## The product
