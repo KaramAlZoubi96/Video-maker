@@ -139,9 +139,14 @@ export async function releaseVideo(id: string, now = new Date()): Promise<boolea
 }
 
 /** Release the top video of a page's queue. Held (not failed) if an account it needs is disconnected. */
+/** Approved (or no approval needed) and ready to post. */
+export const canPost = (v: Video) => v.approval !== "pending" && v.approval !== "changes";
+
 export async function releaseNextVideo(page: PageId, now = new Date()): Promise<string | null> {
+  // Videos with a fixed calendar time and videos still waiting for approval are skipped by the daily times.
   const queue = (await listVideos())
-    .filter((v) => pageOf(v) === page && v.status === "ready" && !v.releasedAt && !v.deleted && Object.values(v.posts).some((p) => p?.status === "pending"))
+    .filter((v) => pageOf(v) === page && v.status === "ready" && !v.releasedAt && !v.deleted && !v.scheduledAt && canPost(v)
+      && Object.values(v.posts).some((p) => p?.status === "pending"))
     .sort((a, b) => a.position - b.position || a.createdAt.localeCompare(b.createdAt));
   const top = queue[0];
   if (!top) return null;
@@ -153,9 +158,21 @@ export async function releaseNextVideo(page: PageId, now = new Date()): Promise<
   return (await releaseVideo(top.id, now)) ? top.id : null;
 }
 
+/** Videos pinned to a date/time in the calendar go out when that time comes (once approved). */
+export async function releaseScheduled(now = new Date()): Promise<string[]> {
+  const due = (await listVideos()).filter((v) => v.scheduledAt && Date.parse(v.scheduledAt) <= now.getTime()
+    && v.status === "ready" && !v.releasedAt && !v.deleted && canPost(v));
+  const out: string[] = [];
+  for (const v of due) {
+    if ((await missingPlatforms(v)).length) continue; // held until the account is connected again
+    if (await releaseVideo(v.id, now)) out.push(v.id);
+  }
+  return out;
+}
+
 /** Each page posts at its own times. Returns the ids of videos released now. */
 export async function checkSlots(now = new Date()): Promise<string[]> {
-  const released: string[] = [];
+  const released: string[] = [...await releaseScheduled(now)];
   for (const page of PAGE_IDS) {
     const s = await getSettings();
     const ps = s.pages[page];

@@ -181,6 +181,91 @@ describe("upload", () => {
   });
 });
 
+describe("approval, fixed times, calendar", () => {
+  const meta2 = { pageId: "p2", title: "Dream", description: "", platforms: ["youtube"], fileName: "d.mp4", width: 1080, height: 1920, duration: 20 };
+  async function uploadAs(br: Browser, size = 100, extra: object = {}) {
+    const c = await br.call("POST", "/api/videos", { ...meta2, size, ...extra });
+    await br.call("PUT", `/api/videos/${c.json.id}/chunks/0`, undefined, { body: mp4Bytes(size) });
+    await br.call("POST", `/api/videos/${c.json.id}/complete`, {});
+    return c.json.id as string;
+  }
+  async function twoUsers() {
+    const me = await loggedIn();
+    await me.call("POST", "/api/users", { username: "bob", password: "password456" });
+    const bob = new Browser();
+    await bob.call("POST", "/api/login", { username: "bob", password: "password456" });
+    await tokens.saveAccount("p2", "youtube", { accessToken: "a", refreshToken: "r", status: "ok" });
+    return { me, bob };
+  }
+
+  it("with one user, videos don't need approval", async () => {
+    const me = await loggedIn();
+    const id = await uploadAs(me);
+    expect((await q.getVideo(id))!.approval).toBe("approved");
+  });
+
+  it("the friend's video waits for my approval; I can approve or send it back", async () => {
+    const { me, bob } = await twoUsers();
+    const id = await uploadAs(bob);
+    expect((await q.getVideo(id))!.approval).toBe("pending");
+    expect((await me.call("GET", "/api/dashboard")).json.toApprove).toBe(1);
+    expect((await bob.call("GET", "/api/dashboard")).json.toApprove).toBe(0);
+    expect((await bob.call("POST", `/api/videos/${id}/post-now`, {})).json.error).toMatch(/waiting for approval/);
+    expect(await q.releaseNextVideo("p2")).toBeNull(); // daily time skips it
+    expect((await me.call("POST", `/api/videos/${id}/approve`, { decision: "changes" })).json.error).toMatch(/what should change/);
+    await me.call("POST", `/api/videos/${id}/approve`, { decision: "changes", note: "Better title please" });
+    expect((await q.getVideo(id))!).toMatchObject({ approval: "changes", approvalNote: "Better title please", approvedBy: "alice" });
+    await bob.call("POST", `/api/videos/${id}/edit`, { title: "Better title", description: "" });
+    expect((await q.getVideo(id))!.approval).toBe("pending");
+    await me.call("POST", `/api/videos/${id}/approve`, { decision: "approve" });
+    expect((await q.getVideo(id))!.approval).toBe("approved");
+    expect(await q.releaseNextVideo("p2")).toBe(id);
+  });
+
+  it("approval can be turned off", async () => {
+    const { me, bob } = await twoUsers();
+    await me.call("POST", "/api/settings", { timezone: "UTC", requireApproval: false });
+    expect((await q.getVideo(await uploadAs(bob)))!.approval).toBe("approved");
+  });
+
+  it("a fixed time posts at that time, not at the daily times", async () => {
+    const me = await loggedIn();
+    await tokens.saveAccount("p2", "youtube", { accessToken: "a", refreshToken: "r", status: "ok" });
+    const id = await uploadAs(me);
+    expect((await me.call("POST", `/api/videos/${id}/schedule`, { at: "2020-01-01T10:00" })).json.error).toMatch(/future/);
+    expect((await me.call("POST", `/api/videos/${id}/schedule`, { at: "not a date" })).json.error).toMatch(/valid/);
+    const soon = new Date(Date.now() + 2 * 3600e3);
+    await me.call("POST", `/api/videos/${id}/schedule`, { at: soon.toISOString() });
+    expect(await q.releaseNextVideo("p2")).toBeNull(); // not taken by a daily time
+    expect(await q.releaseScheduled(new Date())).toEqual([]);
+    expect(await q.releaseScheduled(new Date(soon.getTime() + 1000))).toEqual([id]);
+  });
+
+  it("calendar shows posted, fixed and upcoming videos in queue order", async () => {
+    const me = await loggedIn();
+    await me.call("POST", "/api/pages/p2", { name: "Dreamcore", slots: "09:00, 21:00" });
+    const a = await uploadAs(me, 100), b = await uploadAs(me, 110), c = await uploadAs(me, 120);
+    const fixed = new Date(Date.now() + 26 * 3600e3);
+    await me.call("POST", `/api/videos/${c}/schedule`, { at: fixed.toISOString() });
+    const cal = (await me.call("GET", "/api/calendar?days=7")).json;
+    const p2 = cal.pages.find((p: any) => p.id === "p2");
+    const autos = p2.items.filter((i: any) => i.kind === "auto");
+    expect(autos.map((i: any) => i.videoId)).toEqual([a, b]);
+    expect(Date.parse(autos[0].at)).toBeLessThan(Date.parse(autos[1].at));
+    expect(p2.items.find((i: any) => i.kind === "fixed")).toMatchObject({ videoId: c, at: fixed.toISOString() });
+    expect(p2.emptySlots.length).toBeGreaterThan(5); // only 2 videos for 14 daily times
+    expect(cal.days.length).toBe(10);
+  });
+
+  it("serves the video in small pieces so it can be watched before approving", async () => {
+    const me = await loggedIn();
+    const id = await uploadAs(me, 100);
+    const r = await me.call("GET", `/api/videos/${id}/file`, undefined, { headers: { Range: "bytes=10-" } });
+    expect(r.status).toBe(206);
+    expect(r.res.headers.get("content-range")).toBe("bytes 10-99/100");
+  });
+});
+
 describe("stories board", () => {
   const story = (id: string, extra: object = {}) => ({ id, subreddit: "AmItheAsshole", author: "u/teller", title: "AITA for this?", body: "x ".repeat(100), score: 900, comments: 50, rating: 82, reasons: ["Popular"], ...extra });
 

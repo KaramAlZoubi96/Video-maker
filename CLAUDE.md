@@ -17,6 +17,13 @@ simple English. Do the work end to end and report plainly what changed.
 - Queue per page; at each slot the top video is released; "Post now" releases immediately.
 - Views/likes refreshed every 3 h for 30 days; videos finished >35 days ago are archived and their numbers
   kept in `pagestats/{page}`.
+- Approval: with 2+ users and `settings.requireApproval` (default on), finished uploads get `approval: "pending"`;
+  slots/fixed times skip videos until `approved` (`canPost()` in queue.mts). "changes" = sent back with a note;
+  editing the text puts it back to pending. Videos can be watched via `/api/videos/:id/file` (Range, ≤ one 4 MiB piece per response).
+- Fixed times: `video.scheduledAt` (set from Queue 🗓 or the Calendar); `releaseScheduled()` runs each minute; fixed
+  videos don't use daily slots. Calendar prediction lives in `netlify/lib/calendar.mts`.
+- Batch: Stories board ticks → `maker.html?batch=id,id` → each story is rendered and uploaded straight to the queue
+  (stories on credit pages are skipped unless the author said yes).
 - Stories board (`stories/{id}` in Blobs) + browser **Video Maker**: stories are found by a bookmarklet that runs on
   reddit.com (Reddit blocks unauthenticated API access since 2026; logged-in same-origin fetch still works), rated in
   the browser, saved to the board. Videos are made **in the browser**: Kokoro TTS (`public/vendor/kokoro.web.js`,

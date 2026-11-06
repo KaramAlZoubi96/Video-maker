@@ -5,6 +5,9 @@ A private website for you and your friend: upload a vertical video, and it posts
 
 - 🎬 **Reddit story video maker**: find top stories (rated ⭐), free AI voice, Reddit card + word-by-word captions,
   random clip from your long background video, auto Part 1/2 for long stories → [docs/MAKE_VIDEOS.md](docs/MAKE_VIDEOS.md)
+- 🎬🎬 **Batch**: tick several stories → one click makes them all and puts them in the queue
+- ✅ **Approve before posting**: a video made by one of you waits until the other watches it and taps Approve (or sends it back with a note)
+- 🗓 **Calendar**: see what posts when for both pages; drag a video to another day or set an exact date and time
 - 📺 **2 pages** (Reddit Stories + Dreamcore): each page has its own YouTube channel, Instagram account and posting times
 - 📖 Reddit Stories page asks for the story link, author and permission, and credits the author in the caption
 - #️⃣ Saved hashtags per page, added to every video automatically
@@ -46,7 +49,7 @@ scripts/local-server.mts   run the site on your computer for testing
 ## For developers
 ```bash
 npm install
-npm test            # 77 tests
+npm test            # 83 tests
 npm run typecheck
 # Try it locally with fake YouTube/Instagram (no accounts needed), then open http://localhost:8888
 MOCK_PLATFORMS=1 GOOGLE_CLIENT_ID=x GOOGLE_CLIENT_SECRET=x node --experimental-strip-types scripts/local-server.mts

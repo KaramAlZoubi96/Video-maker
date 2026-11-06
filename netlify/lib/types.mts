@@ -60,6 +60,12 @@ export interface Video {
   credit?: Credit | null;
   /** The story on the Stories board this video was made from. */
   storyId?: string | null;
+  /** Approval: "pending" waits for the other person, "changes" was sent back, "approved"/null can post. */
+  approval?: "pending" | "approved" | "changes" | null;
+  approvedBy?: string | null;
+  approvalNote?: string | null;
+  /** A fixed time chosen in the calendar. Fixed videos don't use the page's daily times. */
+  scheduledAt?: string | null;
   /** Set first when deleting, so the scheduler stops touching it. */
   deleted?: boolean;
   posts: Partial<Record<Platform, Post>>;
@@ -94,6 +100,8 @@ export interface Settings {
   pages: Record<PageId, PageSettings>;
   lastMaintenance?: string | null;
   lastStatsRun?: string | null;
+  /** New videos wait until the other person approves them (only when there are 2+ users). */
+  requireApproval?: boolean;
   /** Old single-page fields, read once to move them into pages.p1. */
   slots?: string[];
   lastSlotRun?: string | null;
@@ -103,6 +111,7 @@ export const DEFAULT_SETTINGS: Settings = {
   timezone: "UTC",
   youtubePrivacy: "public",
   addShortsTag: true,
+  requireApproval: true,
   pages: {
     p1: { name: "Reddit Stories", slots: ["12:00", "19:00"], hashtags: "#redditstories #reddit #storytime", needsCredit: true },
     p2: { name: "Dreamcore", slots: ["15:00"], hashtags: "#dreamcore #weirdcore #liminalspaces", needsCredit: false },

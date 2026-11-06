@@ -74,6 +74,11 @@
   <!-- Board -->
   <h2>Your story board <span class="muted small">(shared with your friend)</span></h2>
   <div class="ptabs" id="statusTabs"></div>
+  <div class="actions" id="batchBar" style="margin:0 0 12px">
+    <button id="makeSelected" disabled>🎬 Make selected (0)</button>
+    <button class="ghost" id="selectAllowed">Tick all allowed</button>
+    <span class="muted small">Tick stories, then make them all in one go — they go straight into the queue.</span>
+  </div>
   <div id="board"></div>
 </main>
 <script type="module">
@@ -82,6 +87,7 @@ import { STORY_SUBREDDITS, isUsablePost, rateStory, stars, formatCount, formatDu
 const $ = (id) => document.getElementById(id);
 const STATUS = { new: "🆕 New", asked: "✉️ Asked author", allowed: "✅ Allowed", made: "🎬 Made", queued: "📅 In queue", skipped: "⏭ Skipped" };
 let BOARD = [], FOUND = [], tab = "open";
+const SELECTED = new Set();
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
@@ -207,7 +213,7 @@ function renderBoard() {
   $("board").innerHTML = list.map((s) => {
     const secs = estimateSeconds(wordCount(cleanStoryText(s.body)));
     return `<div class="card story">
-      <div class="storyhead"><span class="stars">${stars(s.rating)}</span> <b>${s.rating}</b> <span class="badge">${STATUS[s.status]}</span>
+      <div class="storyhead"><input type="checkbox" class="pick" data-pick="${esc(s.id)}" ${SELECTED.has(s.id) ? "checked" : ""} title="Tick to make in a batch"> <span class="stars">${stars(s.rating)}</span> <b>${s.rating}</b> <span class="badge">${STATUS[s.status]}</span>
         ${s.pickedBy ? `<span class="badge">🙋 ${esc(s.pickedBy)} is on it</span>` : ""}</div>
       <div class="t">${esc(s.title)}</div>
       <div class="muted small">r/${esc(s.subreddit)} · u/${esc(s.author)} · ▲ ${formatCount(s.score)} · 💬 ${formatCount(s.comments)} · ⏱ ~${formatDuration(secs)}${secs > 170 ? ` · ${Math.ceil(secs / 160)} parts` : ""} · added by ${esc(s.addedBy)}</div>
@@ -223,6 +229,11 @@ function renderBoard() {
       </div>
     </div>`;
   }).join("") || `<div class="empty">${tab === "open" ? "No stories yet. Click <b>📥 Find stories on Reddit</b> above." : "Nothing here."}</div>`;
+  $("board").querySelectorAll("[data-pick]").forEach((c) => c.addEventListener("change", () => {
+    if (c.checked) SELECTED.add(c.dataset.pick); else SELECTED.delete(c.dataset.pick);
+    updateBatchBar();
+  }));
+  updateBatchBar();
   $("board").querySelectorAll("[data-act]").forEach((el) => el.addEventListener("click", async (e) => {
     const { act, id } = el.dataset;
     if (act !== "asked") e.preventDefault();
@@ -235,6 +246,20 @@ function renderBoard() {
     await loadBoard();
   }));
 }
+
+function updateBatchBar() {
+  for (const id of [...SELECTED]) if (!BOARD.find((s) => s.id === id)) SELECTED.delete(id);
+  $("makeSelected").textContent = `🎬 Make selected (${SELECTED.size})`;
+  $("makeSelected").disabled = SELECTED.size === 0;
+}
+$("makeSelected").addEventListener("click", () => {
+  if (SELECTED.size) location.href = "/maker.html?batch=" + encodeURIComponent([...SELECTED].join(","));
+});
+$("selectAllowed").addEventListener("click", () => {
+  BOARD.filter((s) => s.status === "allowed").forEach((s) => SELECTED.add(s.id));
+  renderBoard();
+  if (!SELECTED.size) flash("No stories are marked “Author said yes” yet.", true);
+});
 
 // ---------- start ----------
 $("findBtn").addEventListener("click", () => { $("finder").classList.toggle("hidden"); $("manual").classList.add("hidden"); });

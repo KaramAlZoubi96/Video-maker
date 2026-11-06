@@ -26,6 +26,7 @@
   <select id="privacy"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select>
   <div class="muted small">Until Google approves your API project (audit), YouTube keeps API uploads private. See docs/SETUP_YOUTUBE.md.</div>
   <div class="check" style="margin-top:12px"><input type="checkbox" id="st"> <label for="st">Add #Shorts to YouTube automatically if missing</label></div>
+  <div class="check"><input type="checkbox" id="ra"> <label for="ra">New videos wait until the other person approves them ✅</label></div>
   <p><button type="submit">Save</button></p>
 </form>
 </div>
@@ -119,6 +120,7 @@ async function load() {
   $("tzhint").innerHTML = guess && guess !== S.timezone ? `Your device is in <b>${esc(guess)}</b>. <a href="#" onclick="event.preventDefault();$('tz').value='${esc(guess)}'">Use it</a> (then Save)` : "";
   $("privacy").value = S.youtubePrivacy;
   $("st").checked = S.addShortsTag;
+  $("ra").checked = S.requireApproval;
   $("users").innerHTML = S.users.map(u => `<li>${esc(u.username)} <span class="muted small">since ${fmtDate(u.createdAt)}</span></li>`).join("");
   $("ruYt").textContent = S.redirectYoutube;
   $("ruIg").textContent = S.redirectInstagram;
@@ -126,7 +128,7 @@ async function load() {
 
 $("general").addEventListener("submit", async e => {
   e.preventDefault();
-  if (await post("/api/settings", { timezone: $("tz").value, youtubePrivacy: $("privacy").value, addShortsTag: $("st").checked })) load();
+  if (await post("/api/settings", { timezone: $("tz").value, youtubePrivacy: $("privacy").value, addShortsTag: $("st").checked, requireApproval: $("ra").checked })) load();
 });
 $("addUser").addEventListener("submit", async e => {
   e.preventDefault();

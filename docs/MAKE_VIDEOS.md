@@ -30,3 +30,17 @@ Click **🙋 I'll do it** so your friend knows you're making that one.
 
 The video has: the Reddit post card while the title is read → big word-by-word captions (current word in
 yellow) → the voice → your background. 1080×1920, 30 fps, MP4.
+
+## Make many at once (batch)
+On the Stories board, tick several stories (or **Tick all allowed**) → **🎬 Make selected**. Pick the voice,
+background and page once, then **Make all**. Each story becomes its own video (long ones get parts) and goes
+straight into the queue. Stories whose author hasn't said yes are skipped (or tick "The author said yes" next to them).
+
+## Approve before posting
+When one of you makes or uploads a video, it shows **⏳ Waiting for approval** on the Queue page. The other person
+taps **▶** to watch it, then **✅ Approve** or **✏️ Send back** with a note. Only approved videos post.
+Turn this off in Settings → General if you don't want it.
+
+## Calendar
+**🗓 Calendar** shows what posts when for both pages (2 or 4 weeks). Drag a video to another day — or tap it — to give
+it a fixed date and time. Empty posting times are shown, so you know when to make more.

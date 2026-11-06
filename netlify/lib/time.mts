@@ -73,6 +73,26 @@ export function nextSlotAfter(now: Date, slots: string[], tz: string): Date | nu
   return slotMomentsAround(now, slots, tz, 0, 2).find((d) => d > now) ?? null;
 }
 
+/** All slot moments after `now` for the next `days` days, in order. */
+export function upcomingSlots(now: Date, slots: string[], tz: string, days: number): Date[] {
+  return slotMomentsAround(now, slots, tz, 0, days).filter((d) => d > now && d.getTime() <= now.getTime() + days * 86400000);
+}
+
+/** "2026-11-07T20:00" (wall time in `tz`) → instant. */
+export function parseLocalDateTime(s: string, tz: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})$/.exec(String(s).trim());
+  if (!m) return null;
+  const [y, mo, d, h, mi] = m.slice(1).map(Number);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return null;
+  return zonedToDate(y, mo, d, h, mi, tz);
+}
+
+/** Local calendar date "YYYY-MM-DD" of an instant in `tz`. */
+export function localDate(d: Date, tz: string): string {
+  const p = localParts(d, tz);
+  return `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}`;
+}
+
 /** YouTube's daily API quota resets at midnight Pacific time. */
 export function pacificDay(d = new Date()): string {
   const p = localParts(d, "America/Los_Angeles");

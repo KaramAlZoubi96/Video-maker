@@ -34,6 +34,7 @@ function fmtDate(iso, tz) {
 
 const NAV = [
   ["/", "🎬", "Queue"],
+  ["/calendar.html", "🗓", "Calendar"],
   ["/stories.html", "📖", "Stories"],
   ["/upload.html", "⬆", "Upload"],
   ["/settings.html", "⚙", "Settings"],

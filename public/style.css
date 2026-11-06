@@ -186,3 +186,29 @@ button:disabled { opacity: .4; cursor: default; }
 .bgrow input { accent-color: var(--accent-2); }
 .previewCanvas { display: block; margin: 12px auto 0; border-radius: 12px; border: 1px solid var(--line); width: 180px; height: 320px; }
 .result video { width: 100%; max-height: 480px; border-radius: 12px; background: #000; margin: 10px 0; }
+
+/* ---- approval, modal, calendar --------------------------------------- */
+.approve { margin: 0 10px 8px; padding: 10px; border-radius: 12px; background: var(--warn-bg); color: var(--text); }
+.approve.changes { background: var(--err-bg); }
+.banner.ok { background: var(--warn-bg); color: var(--warn); }
+.modal { position: fixed; inset: 0; background: #000c; z-index: 50; display: grid; place-items: center; padding: 16px; }
+.modalbox { width: min(420px, 100%); }
+.modalbox video { width: 100%; max-height: 75vh; border-radius: 14px; background: #000; display: block; }
+.modalbox input[type=datetime-local] { width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card-2); color: var(--text); font: inherit; margin-top: 6px; }
+.cal { overflow-x: auto; padding-bottom: 8px; }
+.calgrid { display: grid; gap: 8px; min-width: 900px; }
+.calhead { font-size: 12px; color: var(--muted); text-align: center; padding: 6px 0; }
+.calhead.today { color: var(--text); font-weight: 800; }
+.calpage { font-weight: 800; padding: 8px 0 2px; }
+.calcell { background: var(--card); border: 1px solid var(--line); border-radius: 12px; min-height: 120px; padding: 6px; display: flex; flex-direction: column; gap: 6px; }
+.calcell.past { opacity: .6; }
+.calcell.today { border-color: var(--accent-2); }
+.calcell.drop { outline: 2px dashed var(--accent-1); }
+.calitem { background: var(--card-2); border: 1px solid var(--line); border-radius: 10px; padding: 6px; font-size: 12px; cursor: grab; }
+.calitem .tm { font-weight: 800; }
+.calitem .tt { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.calitem.fixed { border-color: var(--accent-1); }
+.calitem.posted { opacity: .7; cursor: default; }
+.calitem.warn { border-color: var(--warn); }
+.calslot { border: 1px dashed var(--line); border-radius: 10px; padding: 6px; font-size: 12px; color: var(--muted); text-align: center; }
+.storyhead .pick { width: 18px; height: 18px; accent-color: var(--accent-2); }

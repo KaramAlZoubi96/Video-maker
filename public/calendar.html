@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Calendar · Shorts HQ</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js"></script>
+</head>
+<body class="hidden">
+<main>
+  <div id="flash" class="flash hidden"></div>
+  <div class="head">
+    <h1>🗓 Calendar</h1>
+    <div class="actions">
+      <select id="days" style="max-width:160px"><option value="7">1 week</option><option value="14" selected>2 weeks</option><option value="28">4 weeks</option></select>
+    </div>
+  </div>
+  <p class="muted small">What posts when, for both pages. <b>Drag</b> a video to another day to give it a fixed time (on a phone, tap it).
+    Videos without a fixed time use the page's daily times in queue order.</p>
+  <div id="summary"></div>
+  <div class="cal"><div id="grid" class="calgrid"></div></div>
+</main>
+<script>
+let CAL = null;
+const $ = (id) => document.getElementById(id);
+const tz = () => CAL.timezone;
+const timeOf = (iso) => new Date(iso).toLocaleTimeString(undefined, { timeZone: tz(), hour: "2-digit", minute: "2-digit" });
+const dayOf = (iso) => new Intl.DateTimeFormat("en-CA", { timeZone: tz(), year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
+const KIND = { auto: "", fixed: "🗓 fixed", posted: "✅ posted", posting: "↑ posting" };
+
+function render() {
+  const today = dayOf(new Date().toISOString());
+  const cols = CAL.days.length;
+  const g = $("grid");
+  g.style.gridTemplateColumns = `repeat(${cols}, minmax(120px, 1fr))`;
+  let html = CAL.days.map((d) => {
+    const dt = new Date(d + "T12:00:00");
+    return `<div class="calhead ${d === today ? "today" : ""}">${dt.toLocaleDateString(undefined, { weekday: "short" })}<br>${dt.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</div>`;
+  }).join("");
+  const summary = [];
+  for (const p of CAL.pages) {
+    html += `<div class="calpage" style="grid-column: 1 / span ${cols}">${esc(p.name)}</div>`;
+    for (const d of CAL.days) {
+      const items = p.items.filter((i) => dayOf(i.at) === d);
+      const empties = p.emptySlots.filter((s) => dayOf(s) === d);
+      html += `<div class="calcell ${d < today ? "past" : ""} ${d === today ? "today" : ""}" data-page="${p.id}" data-day="${d}">
+        ${items.map((i) => `<div class="calitem ${i.kind} ${i.warn ? "warn" : ""}" ${["auto", "fixed"].includes(i.kind) ? `draggable="true" data-id="${i.videoId}"` : ""} title="${esc(i.title)}${i.warn ? " — " + esc(i.warn) : ""}">
+            <div class="tm">${timeOf(i.at)} ${KIND[i.kind] ? `<span class="muted">${KIND[i.kind]}</span>` : ""}</div>
+            <div class="tt">${esc(i.title)}</div>
+            ${i.approval === "pending" ? '<div class="muted">⏳ needs approval</div>' : ""}
+            ${i.warn && i.approval !== "pending" ? `<div class="muted">⚠ ${esc(i.warn)}</div>` : ""}
+          </div>`).join("")}
+        ${empties.map((s) => `<div class="calslot">${timeOf(s)} · empty</div>`).join("")}
+      </div>`;
+    }
+    const empty = p.emptySlots.length;
+    if (empty) summary.push(`<div class="banner ok">⚠ <b>${esc(p.name)}</b>: ${empty} posting ${empty === 1 ? "time has" : "times have"} no video yet in the next ${CAL.days.length - 3} days. <a href="/stories.html">Make more</a></div>`);
+    if (p.later) summary.push(`<div class="muted small">${esc(p.name)}: ${p.later} more ${p.later === 1 ? "video waits" : "videos wait"} after these days.</div>`);
+  }
+  g.innerHTML = html;
+  $("summary").innerHTML = summary.join("");
+  wire();
+}
+
+function wire() {
+  let dragId = null;
+  document.querySelectorAll(".calitem[data-id]").forEach((el) => {
+    el.addEventListener("dragstart", (e) => { dragId = el.dataset.id; e.dataTransfer.setData("text/plain", dragId); });
+    el.addEventListener("click", () => openItem(el.dataset.id));
+  });
+  document.querySelectorAll(".calcell").forEach((cell) => {
+    cell.addEventListener("dragover", (e) => { e.preventDefault(); cell.classList.add("drop"); });
+    cell.addEventListener("dragleave", () => cell.classList.remove("drop"));
+    cell.addEventListener("drop", async (e) => {
+      e.preventDefault(); cell.classList.remove("drop");
+      const id = e.dataTransfer.getData("text/plain") || dragId;
+      if (!id) return;
+      const item = CAL.pages.flatMap((p) => p.items).find((i) => i.videoId === id);
+      // keep the same time of day, move to the new day
+      const time = item ? new Date(item.at).toLocaleTimeString("en-GB", { timeZone: tz(), hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) : "19:00";
+      await schedule(id, `${cell.dataset.day}T${time}`);
+    });
+  });
+}
+
+function openItem(id) {
+  const item = CAL.pages.flatMap((p) => p.items).find((i) => i.videoId === id);
+  if (!item) return;
+  const local = new Date(item.at).toLocaleString("sv-SE", { timeZone: tz() }).slice(0, 16).replace(" ", "T");
+  const box = document.createElement("div");
+  box.className = "modal";
+  box.innerHTML = `<div class="modalbox card"><b>${esc(item.title)}</b>
+    <p class="small muted">${item.kind === "fixed" ? "Fixed time" : "Uses the page's daily times"} · made by ${esc(item.uploader)}</p>
+    <label>Post at (${esc(tz())})</label><input type="datetime-local" value="${local}">
+    <div class="acts" style="margin-top:12px"><button data-a="save">Save time</button>
+      ${item.kind === "fixed" ? '<button class="ghost" data-a="auto">Back to daily times</button>' : ""}
+      <button class="ghost" data-a="watch">▶ Watch</button><button class="ghost" data-a="close">Close</button></div>
+    <video class="hidden" controls playsinline style="width:100%;margin-top:10px;border-radius:12px"></video></div>`;
+  box.addEventListener("click", async (e) => {
+    const a = e.target.dataset && e.target.dataset.a;
+    if (e.target === box || a === "close") return box.remove();
+    if (a === "save") { const v = box.querySelector("input").value; if (v) { box.remove(); await schedule(id, v); } }
+    if (a === "auto") { box.remove(); await schedule(id, null); }
+    if (a === "watch") { const v = box.querySelector("video"); v.src = `/api/videos/${id}/file`; v.classList.remove("hidden"); v.play().catch(() => {}); }
+  });
+  document.body.appendChild(box);
+}
+
+// Times are in the website's timezone (Settings → General); the server converts them.
+async function schedule(id, localDateTime) {
+  const r = await api(`/api/videos/${id}/schedule`, { json: { at: localDateTime } });
+  flash(r.ok ? r.data.message : r.data.error || "Could not change the time.", !r.ok);
+  await load();
+}
+
+async function load() {
+  const r = await api("/api/calendar?days=" + $("days").value);
+  if (!r.ok) return;
+  CAL = r.data;
+  render();
+}
+$("days").addEventListener("change", load);
+(async () => { if (await requireUser()) { showUrlMessages(); await load(); } })();
+</script>
+</body>
+</html>

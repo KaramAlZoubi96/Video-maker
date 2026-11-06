@@ -16,7 +16,13 @@
   <div class="maker">
     <div>
       <!-- 1. Story -->
-      <div class="card">
+      <div class="card hidden" id="batchCard">
+        <b>1. Stories in this batch</b>
+        <div class="muted small">Each story becomes its own video (long ones get Part 1, Part 2…) and goes straight into the queue. Untick a story to leave it out.</div>
+        <div id="batchList" style="margin-top:10px"></div>
+        <div class="check"><input type="checkbox" id="bCensor" checked> <label for="bCensor">Replace swear words (better for YouTube money)</label></div>
+      </div>
+      <div class="card" id="storyCard">
         <b>1. The story</b> <span class="muted small" id="storyMeta"></span>
         <label for="title">Title (read first, shown on the Reddit card)</label>
         <input id="title" type="text" maxlength="300">
@@ -164,7 +170,7 @@ const progress = (p, t) => { $("pb").style.display = "block"; $("pb").firstEleme
  * Record the voice for every part. Long stories become Part 1, Part 2… (each part announces its number,
  * and ends with "Follow for part N"). If a part comes out longer than Shorts allow, it is split and redone.
  */
-async function recordParts(title, text, voice, speed) {
+async function recordParts(title, text, voice, speed, pf = progress) {
   let texts = splitIntoParts(text, { speed });
   for (let attempt = 0; attempt < 4; attempt++) {
     const total = texts.length, out = [];
@@ -174,7 +180,7 @@ async function recordParts(title, text, voice, speed) {
         title: total > 1 ? `${title}. Part ${i + 1}.` : title,
         body: texts[i] + (i < total - 1 ? ` Follow for part ${i + 2}!` : ""),
         voice, speed,
-        onProgress: (p, t) => progress(Math.round(((i + p / 100) / total) * 30), total > 1 ? `Part ${i + 1}/${total}: ${t}` : t),
+        onProgress: (p, t) => pf(Math.round(((i + p / 100) / total) * 100), total > 1 ? `Part ${i + 1}/${total}: ${t}` : t),
       });
       if (n.duration > MAX_PART_SECONDS + 7) { tooLong = i; break; }
       out.push({ n, text: texts[i] });
@@ -183,42 +189,118 @@ async function recordParts(title, text, voice, speed) {
     // The voice read slower than expected: split the whole story again into even, shorter parts.
     texts = splitIntoParts(text, { speed, maxSeconds: MAX_PART_SECONDS - 15 * (attempt + 1) });
     if (texts.length <= total) texts = splitIntoParts(text, { speed, maxSeconds: Math.floor((MAX_PART_SECONDS * total) / (total + 1)) });
-    progress(0, "A part came out too long — splitting the story again and recording…");
+    pf(0, "A part came out too long — splitting the story again and recording…");
   }
   throw new Error("This story is too long to split well. Shorten the text and try again.");
 }
 
+/**
+ * Make all the videos for one story. Calls onPart(result) for each finished part (Part 1, Part 2…).
+ * `pf(p, text)` reports progress 0–100 for this story.
+ */
+async function produce(story, title, text, bgInfo, used, voice, speed, pf, onPart) {
+  const narrated = await recordParts(title, text, voice, speed, (p, t) => pf(Math.round(p * 0.3), t));
+  const total = narrated.length;
+  for (let i = 0; i < total; i++) {
+    const { n } = narrated[i];
+    const seg = chooseSegment(bgInfo.bg.duration, n.duration + 1, used);
+    if (seg.reused) flash("All of this background has been used once, so clips will repeat. Add another background or reset it.", false);
+    const res = await renderVideo({
+      bg: bgInfo.bg, bgStart: seg.start, narration: n, support: SUPPORT, signal: abort.signal,
+      card: { subreddit: story.subreddit, author: story.author, title, score: story.score, comments: story.comments },
+      partLabel: total > 1 ? `Part ${i + 1}` : "",
+      onProgress: (p, t) => pf(30 + Math.round((70 * (i + p / 100)) / total), total > 1 ? `Part ${i + 1}/${total}: ${t}` : t),
+    });
+    used.push([seg.start, seg.start + n.duration + 1]);
+    await api("/api/backgrounds/used", { json: { key: bgInfo.key, start: seg.start, end: seg.start + n.duration + 1 } });
+    await onPart({ ...res, part: i + 1, total, title: videoTitle(title, i + 1, total) });
+  }
+  return total;
+}
+
+async function prepare() {
+  if (!SUPPORT?.ok) throw new Error(SUPPORT?.reason || "This browser can't make videos.");
+  const info = await chosenBackground();
+  const bg = await loadBackground(info.file);
+  if (bg.duration < 30) throw new Error("This background video is too short. Use a long one (10 minutes or more).");
+  return { bg, key: info.key, used: await usedRanges(info.key) };
+}
+
 async function make() {
-  if (!SUPPORT?.ok) return flash(SUPPORT?.reason || "This browser can't make videos.", true);
+  if (BATCH) return makeBatch();
   const title = $("title").value.trim(), text = $("body").value.trim();
   if (!title || wordCount(text) < 20) return flash("Write a title and the story text first.", true);
-  let bgInfo;
-  try { bgInfo = await chosenBackground(); } catch (e) { return flash(e.message, true); }
   $("make").disabled = true; $("stop").classList.remove("hidden"); $("results").innerHTML = "";
   abort = new AbortController();
-  const voice = $("voice").value, speed = Number($("speed").value);
   try {
-    const bg = await loadBackground(bgInfo.file);
-    if (bg.duration < 30) throw new Error("This background video is too short. Use a long one (10 minutes or more).");
-    const narrated = await recordParts(title, text, voice, speed);
-    const total = narrated.length;
-    const used = await usedRanges(bgInfo.key);
-    for (let i = 0; i < total; i++) {
-      const { n } = narrated[i];
-      const seg = chooseSegment(bg.duration, n.duration + 1, used);
-      if (seg.reused) flash("All of this background has been used once. Parts will repeat — add another background or reset it.", false);
-      const res = await renderVideo({
-        bg, bgStart: seg.start, narration: n, support: SUPPORT, signal: abort.signal,
-        card: { subreddit: STORY.subreddit, author: STORY.author, title, score: STORY.score, comments: STORY.comments },
-        partLabel: total > 1 ? `Part ${i + 1}` : "",
-        onProgress: (p, t) => progress(30 + Math.round((70 * (i + p / 100)) / total), total > 1 ? `Part ${i + 1}/${total}: ${t}` : t),
-      });
-      used.push([seg.start, seg.start + n.duration + 1]);
-      await api("/api/backgrounds/used", { json: { key: bgInfo.key, start: seg.start, end: seg.start + n.duration + 1 } });
-      addResult({ ...res, part: i + 1, total, title: videoTitle(title, i + 1, total) });
-    }
+    const bgInfo = await prepare();
+    const total = await produce(STORY, title, text, bgInfo, bgInfo.used, $("voice").value, Number($("speed").value), progress, async (res) => addResult(res));
     progress(100, total > 1 ? `Done! ${total} parts are ready below.` : "Done! Your video is ready below.");
     if (STORY.status !== "queued") await api(`/api/stories/${STORY.id}`, { json: { status: "made" } });
+    renderBgList();
+  } catch (e) {
+    flash(e.message || String(e), true);
+    progress(0, "Stopped.");
+  } finally {
+    $("make").disabled = false; $("stop").classList.add("hidden");
+  }
+}
+
+// ---------- batch: many stories, one click ----------
+let BATCH = null;
+const needsOk = (s) => PAGES.find((p) => p.id === $("page").value)?.needsCredit && !["allowed", "made", "queued"].includes(s.status);
+
+function renderBatch() {
+  $("batchList").innerHTML = BATCH.map((s, i) => `<div class="bgrow" style="cursor:default">
+      <input type="checkbox" data-inc="${i}" ${s.include ? "checked" : ""}>
+      <span style="flex:1;min-width:200px"><b>${esc(s.title)}</b><br>
+        <span class="muted small">r/${esc(s.subreddit)} · ~${formatDuration(estimateSeconds(wordCount(cleanStoryText(s.body)), Number($("speed").value)) + 6)}</span>
+        ${needsOk(s) ? `<br><label class="small"><input type="checkbox" data-ok="${i}" ${s.ok ? "checked" : ""}> The author said yes</label>` : ""}</span>
+      <span class="small" data-st="${i}">${esc(s.state || "")}</span></div>`).join("");
+  $("batchList").querySelectorAll("[data-inc]").forEach((c) => c.addEventListener("change", () => { BATCH[c.dataset.inc].include = c.checked; updateBatchBtn(); }));
+  $("batchList").querySelectorAll("[data-ok]").forEach((c) => c.addEventListener("change", () => { BATCH[c.dataset.ok].ok = c.checked; }));
+  updateBatchBtn();
+}
+const updateBatchBtn = () => { $("make").textContent = `🎬 Make all ${BATCH.filter((s) => s.include).length} videos`; };
+const setState = (i, text) => { BATCH[i].state = text; const el = document.querySelector(`[data-st="${i}"]`); if (el) el.textContent = text; };
+
+async function makeBatch() {
+  const list = BATCH.map((s, i) => ({ s, i })).filter(({ s }) => s.include);
+  if (!list.length) return flash("Tick at least one story.", true);
+  const pageId = $("page").value, page = PAGES.find((p) => p.id === pageId);
+  const platforms = [$("yt").checked && "youtube", $("ig").checked && "instagram"].filter(Boolean);
+  if (!platforms.length) return flash("Choose YouTube and/or Instagram (step 4).", true);
+  $("make").disabled = true; $("stop").classList.remove("hidden"); $("results").innerHTML = "";
+  abort = new AbortController();
+  let made = 0, skipped = 0, failed = 0;
+  try {
+    const bgInfo = await prepare();
+    for (let k = 0; k < list.length; k++) {
+      const { s, i } = list[k];
+      if (abort.signal.aborted) break;
+      if (page?.needsCredit && needsOk(s) && !s.ok) { setState(i, "⏭ skipped: author hasn't said yes"); skipped++; continue; }
+      const pf = (p, t) => { progress(Math.round(((k + p / 100) / list.length) * 100), `Video ${k + 1} of ${list.length}: ${t}`); setState(i, `⏳ ${p}%`); };
+      try {
+        if (page?.needsCredit) await api(`/api/stories/${s.id}`, { json: { status: "allowed" } });
+        const title = s.title.trim(), text = cleanStoryText(s.body, { censor: $("bCensor").checked });
+        const parts = await produce(s, title, text, bgInfo, bgInfo.used, $("voice").value, Number($("speed").value), pf, async (res) => {
+          setState(i, `⬆ uploading part ${res.part}/${res.total}…`);
+          await uploadVideoBlob(res.blob, {
+            pageId, title: res.title, description: $("desc").value, platforms, storyId: s.id,
+            credit: page?.needsCredit ? { url: s.url, author: s.author, permission: true } : null,
+            width: W, height: H, duration: res.duration, thumbnail: res.thumbnail, fileName: "story.mp4",
+          });
+        });
+        setState(i, `✅ in the queue${parts > 1 ? ` (${parts} parts)` : ""}`);
+        made++;
+      } catch (e) {
+        if (abort.signal.aborted) { setState(i, "⏹ stopped"); break; }
+        setState(i, `❌ ${e.message || e}`);
+        failed++;
+      }
+    }
+    progress(100, `Done: ${made} made${skipped ? `, ${skipped} skipped` : ""}${failed ? `, ${failed} failed` : ""}.`);
+    if (made) flash(`${made} ${made === 1 ? "story is" : "stories are"} in the queue. ${$("page").selectedOptions[0].text} will post them at its times.`, false);
     renderBgList();
   } catch (e) {
     flash(e.message || String(e), true);
@@ -277,6 +359,24 @@ async function addToQueue(i, btn) {
   SUPPORT = await checkSupport();
   if (!SUPPORT.ok) { $("support").textContent = "⚠ " + SUPPORT.reason; $("support").classList.remove("hidden"); }
   else if (SUPPORT.muxCodec !== "aac") { $("support").textContent = "⚠ This browser can't make AAC sound, so Instagram may reject these videos. Use Chrome or Edge on Windows or Mac for best results."; $("support").classList.remove("hidden"); }
+  if (params.get("batch")) {
+    const ids = params.get("batch").split(",").filter(Boolean);
+    const [all, d] = await Promise.all([api("/api/stories"), api("/api/dashboard")]);
+    PAGES = d.ok ? d.data.pages : [];
+    $("page").innerHTML = PAGES.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join("");
+    $("page").value = PAGES.find((p) => p.needsCredit)?.id || PAGES[0]?.id;
+    BATCH = (all.ok ? all.data.stories : []).filter((x) => ids.includes(x.id)).map((x) => ({ ...x, include: true, ok: false }));
+    if (!BATCH.length) { flash("Those stories aren't on the board anymore.", true); $("make").disabled = true; return; }
+    STORY = BATCH[0];
+    $("storyCard").classList.add("hidden"); $("batchCard").classList.remove("hidden"); $("permRow").classList.add("hidden");
+    document.querySelector("h1").textContent = `🎬 Make ${BATCH.length} videos`;
+    $("status").textContent = "Keep this tab open. Each video takes about as long as the story; then it goes straight into the queue.";
+    $("page").addEventListener("change", renderBatch);
+    $("speed").addEventListener("input", renderBatch);
+    renderBatch();
+    await renderBgList();
+    return;
+  }
   const id = params.get("story");
   const [s, d] = await Promise.all([id ? api("/api/stories/" + encodeURIComponent(id)) : Promise.resolve({ ok: false, data: { error: "Pick a story on the Stories page first." } }), api("/api/dashboard")]);
   if (!s.ok) { flash(s.data.error || "Story not found.", true); $("make").disabled = true; return; }

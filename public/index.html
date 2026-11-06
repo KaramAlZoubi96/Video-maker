@@ -62,8 +62,11 @@ function tile(v, kind, i, total) {
   const label = kind === "queued" ? `<span class="num">#${i + 1}</span>` : kind === "active" ? `<span class="num live">LIVE</span>` : "";
   const meta = kind === "done" ? fmtDate(v.releasedAt, TZ) : `by ${esc(v.uploader)} · ${Math.round(v.duration)}s`;
   let acts = "";
+  const waitingApproval = v.approval === "pending" || v.approval === "changes";
   if (kind === "queued") {
-    acts = `${v.status === "ready" ? `<button onclick="if(confirm('Post this video now?'))act('${v.id}','post-now')">Post now</button>` : ""}
+    acts = `${v.status === "ready" && !waitingApproval ? `<button onclick="if(confirm('Post this video now?'))act('${v.id}','post-now')">Post now</button>` : ""}
+      ${v.status === "ready" ? `<button class="icon" title="Watch" onclick="watch('${v.id}')">▶</button>
+      <button class="icon" title="Set a date and time" onclick="setTime('${v.id}', ${v.scheduledAt ? `'${v.scheduledAt}'` : "null"})">🗓</button>` : ""}
       <span class="grow"></span>
       <button class="icon" title="Move earlier" ${i === 0 ? "disabled" : ""} onclick="act('${v.id}','move',{direction:-1})">↑</button>
       <button class="icon" title="Move later" ${i === total - 1 ? "disabled" : ""} onclick="act('${v.id}','move',{direction:1})">↓</button>`;
@@ -75,10 +78,25 @@ function tile(v, kind, i, total) {
         <label>Caption</label><textarea name="d" maxlength="2000">${esc(v.description)}</textarea>
         <p><button type="submit">Save</button></p>
       </form></details>` : "";
+  let approval = "";
+  if (kind === "queued" && v.approval === "pending") {
+    const mine = v.uploader === DATA.me;
+    approval = `<div class="approve">
+      <div class="small">⏳ <b>Waiting for approval</b>${mine ? " — your friend will check it" : ` — made by ${esc(v.uploader)}`}</div>
+      <div class="acts" style="padding:8px 0 0">
+        <button onclick="approve('${v.id}', ${mine})">✅ Approve</button>
+        <button class="ghost" onclick="sendBack('${v.id}')">✏️ Send back</button>
+      </div></div>`;
+  } else if (kind === "queued" && v.approval === "changes") {
+    approval = `<div class="approve changes"><div class="small">✏️ <b>Sent back by ${esc(v.approvedBy || "")}:</b> ${esc(v.approvalNote || "")}</div>
+      <div class="small muted">Fix the text below (it goes back for approval), make a new video, or approve it anyway.</div>
+      <div class="acts" style="padding:8px 0 0"><button class="ghost" onclick="approve('${v.id}', true)">✅ Approve anyway</button></div></div>`;
+  }
+  const fixed = kind === "queued" && v.scheduledAt ? `<div class="notes"><div>🗓 <b>${fmtDate(v.scheduledAt, TZ)}</b> (fixed time)</div></div>` : "";
   return `<div class="tile">
     <div class="pic">${label}<img src="/api/thumb/${v.id}" alt="" loading="lazy" onerror="this.remove()">
       <div class="ov" title="${esc(statsTitle(v))}"><div class="t">${esc(v.title)}</div><div class="m">${meta}</div>${statsLine(v)}<div class="dots">${postDots(v)}</div></div></div>
-    ${notes(v)}
+    ${approval}${fixed}${notes(v)}
     <div class="acts">${acts || '<span class="grow"></span>'}${del}</div>
     ${edit}
   </div>`;
@@ -94,9 +112,10 @@ function section(title, list, kind, emptyText) {
 function render() {
   const d = DATA;
   if (!d.pages.find(p => p.id === current)) current = d.pages[0].id;
-  document.getElementById("problems").innerHTML = d.problems.map(p => `<div class="banner">⚠ ${esc(p)} <a href="/settings.html">Fix in Settings</a></div>`).join("");
+  document.getElementById("problems").innerHTML = (d.toApprove ? `<div class="banner ok">⏳ <b>${d.toApprove} ${d.toApprove === 1 ? "video is" : "videos are"} waiting for your approval.</b> Watch them (▶) and tap ✅ Approve.</div>` : "")
+    + d.problems.map(p => `<div class="banner">⚠ ${esc(p)} <a href="/settings.html">Fix in Settings</a></div>`).join("");
   document.getElementById("tabs").innerHTML = d.pages.map(p =>
-    `<button class="${p.id === current ? "on" : ""}" onclick="pick('${p.id}')">${esc(p.name)} <span class="count">${p.queued.length}</span></button>`).join("");
+    `<button class="${p.id === current ? "on" : ""}" onclick="pick('${p.id}')">${esc(p.name)} <span class="count">${p.queued.length}</span>${p.queued.some((v) => v.approval === "pending" && v.uploader !== d.me) ? " ⏳" : ""}</button>`).join("");
   const p = d.pages.find(x => x.id === current);
   document.getElementById("newBtn").href = "/upload.html?page=" + p.id;
   const acc = [p.accounts.youtube && "YouTube " + p.accounts.youtube, p.accounts.instagram && "Instagram " + p.accounts.instagram].filter(Boolean).join(" · ");
@@ -134,6 +153,51 @@ async function refreshStats() {
 }
 
 function pick(id) { current = id; try { localStorage.setItem("page", id); } catch (_) {} render(); }
+
+function watch(id) {
+  const box = document.createElement("div");
+  box.className = "modal";
+  box.innerHTML = `<div class="modalbox"><video src="/api/videos/${id}/file" controls autoplay playsinline></video>
+    <p><button class="ghost" style="width:100%">Close</button></p></div>`;
+  box.addEventListener("click", (e) => { if (e.target === box || e.target.tagName === "BUTTON") box.remove(); });
+  document.body.appendChild(box);
+}
+
+async function approve(id, isOwn) {
+  if (isOwn && !confirm("Usually your friend approves this one. Approve it yourself anyway?")) return;
+  await act(id, "approve", { decision: "approve" });
+}
+
+async function sendBack(id) {
+  const note = prompt("What should change? (your friend will see this)");
+  if (note === null) return;
+  await act(id, "approve", { decision: "changes", note });
+}
+
+function setTime(id, current) {
+  const box = document.createElement("div");
+  box.className = "modal";
+  const pad = (n) => String(n).padStart(2, "0");
+  const d = current ? new Date(current) : new Date(Date.now() + 3600e3);
+  const local = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  box.innerHTML = `<div class="modalbox card"><b>🗓 Post at a fixed date and time</b>
+    <p class="small muted">Instead of the page's daily times. It still needs approval first.</p>
+    <input type="datetime-local" value="${local}">
+    <div class="acts" style="margin-top:12px"><button data-a="save">Save</button>
+    ${current ? '<button class="ghost" data-a="auto">Back to daily times</button>' : ""}<button class="ghost" data-a="close">Cancel</button></div></div>`;
+  box.addEventListener("click", async (e) => {
+    const a = e.target.dataset && e.target.dataset.a;
+    if (e.target === box || a === "close") return box.remove();
+    if (a === "save") {
+      const val = box.querySelector("input").value;
+      if (!val) return;
+      box.remove();
+      await act(id, "schedule", { at: new Date(val).toISOString() });
+    }
+    if (a === "auto") { box.remove(); await act(id, "schedule", { at: null }); }
+  });
+  document.body.appendChild(box);
+}
 
 async function act(id, action, data = {}) {
   const r = await api(`/api/videos/${id}/${action}`, { json: data });

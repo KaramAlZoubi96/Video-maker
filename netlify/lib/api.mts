@@ -3,8 +3,9 @@ import { randomBytes } from "node:crypto";
 import * as auth from "./auth.mts";
 import * as q from "./queue.mts";
 import { kv } from "./store.mts";
-import { isValidTimeZone, nextSlotAfter, normalizeSlots, parseSlot } from "./time.mts";
+import { isValidTimeZone, nextSlotAfter, normalizeSlots, parseLocalDateTime, parseSlot } from "./time.mts";
 import { bestTimes, refreshStats } from "./stats.mts";
+import { buildCalendar } from "./calendar.mts";
 import * as stories from "./stories.mts";
 import * as tokens from "./tokens.mts";
 import {
@@ -85,7 +86,7 @@ function publicVideo(v: Video) {
 const routes: [string, RegExp, Handler][] = [];
 const route = (method: string, path: string, h: Handler) => routes.push([method, new RegExp(`^${path}$`), h]);
 
-route("GET", "/api/dashboard", async () => {
+route("GET", "/api/dashboard", async (_req, _m, user) => {
   const s = await q.getSettings();
   const all = await q.listVideos();
   const pages = [];
@@ -114,7 +115,9 @@ route("GET", "/api/dashboard", async () => {
       unfinished: unfinished.map(publicVideo),
     });
   }
-  return json({ pages, timezone: s.timezone, problems });
+  // Videos waiting for THIS user's approval (made by someone else).
+  const toApprove = all.filter((v) => v.approval === "pending" && !v.releasedAt && !v.deleted && v.uploader !== user).length;
+  return json({ pages, timezone: s.timezone, problems, toApprove, me: user, requireApproval: s.requireApproval !== false });
 });
 
 route("POST", "/api/videos", async (req, _m, user) => {
@@ -187,9 +190,12 @@ route("POST", "/api/videos/([a-z0-9]+)/complete", async (_req, m) => {
   for (let n = 0; n < v.chunkCount; n++) if (!have.has(q.chunkKey(v.id, n))) missing.push(n);
   if (missing.length) return json({ error: "Some pieces are missing.", missing }, 409);
   const maxPos = Math.max(0, ...(await q.listVideos()).filter((x) => q.pageOf(x) === q.pageOf(v)).map((x) => x.position));
+  // With 2+ users and approval on, a new video waits until the other person approves it.
+  const needsApproval = (await q.getSettings()).requireApproval !== false && (await auth.userCount()) > 1;
   await q.updateVideo(v.id, (x) => {
     x.status = "ready";
     x.position = maxPos + 1;
+    x.approval = needsApproval ? "pending" : "approved";
     return true;
   });
   if (v.storyId) {
@@ -224,6 +230,7 @@ route("POST", "/api/videos/([a-z0-9]+)/edit", async (req, m) => {
     if (x.releasedAt) return false;
     x.title = title.trim();
     x.description = description.trim();
+    if (x.approval === "changes") x.approval = "pending"; // fixed → ask again
     return true;
   });
   return json({ ok: true, message: "Saved." });
@@ -259,6 +266,7 @@ route("POST", "/api/videos/([a-z0-9]+)/move", async (req, m) => {
 route("POST", "/api/videos/([a-z0-9]+)/post-now", async (_req, m, _u, ctx) => {
   const v = await q.getVideo(m[1]);
   if (!v || v.status !== "ready") return fail("This video isn't ready yet.");
+  if (!q.canPost(v)) return fail("This video is waiting for approval. The other person needs to tap ✅ Approve first.");
   const missing = await q.missingPlatforms(v);
   if (missing.length) return fail(`Connect ${missing.map(platformName).join(" and ")} for "${await q.pageName(q.pageOf(v))}" in Settings first.`);
   if (!(await q.releaseVideo(v.id))) return fail("This video already started posting.");
@@ -297,6 +305,7 @@ route("GET", "/api/settings", async () => {
   }
   return json({
     timezone: s.timezone, youtubePrivacy: s.youtubePrivacy, addShortsTag: s.addShortsTag, pages,
+    requireApproval: s.requireApproval !== false,
     users: await auth.listUsers(),
     youtubeConfigured: tokens.youtubeConfigured(), instagramOAuthConfigured: tokens.instagramOAuthConfigured(),
     redirectYoutube: tokens.redirectUri("youtube"), redirectInstagram: tokens.redirectUri("instagram"),
@@ -314,6 +323,7 @@ route("POST", "/api/settings", async (req) => {
     s.timezone = String(b.timezone);
     s.youtubePrivacy = privacy;
     s.addShortsTag = Boolean(b.addShortsTag);
+    if (typeof b.requireApproval === "boolean") s.requireApproval = b.requireApproval;
   });
   return json({ ok: true, message: "Settings saved." });
 });
@@ -362,6 +372,67 @@ route("POST", "/api/password", async (req, _m, user) => {
 route("POST", "/api/stats/refresh", async () => {
   const n = await refreshStats(Date.now(), fetch, true);
   return json({ ok: true, message: n ? `Updated numbers for ${n} posts.` : "No posted videos to update yet." });
+});
+
+// ---- approval -------------------------------------------------------------------
+route("POST", "/api/videos/([a-z0-9]+)/approve", async (req, m, user) => {
+  const b = await body(req);
+  const decision = b.decision === "changes" ? "changes" : "approved";
+  const note = String(b.note ?? "").trim().slice(0, 500);
+  if (decision === "changes" && !note) return fail("Write what should change.");
+  const v = await q.getVideo(m[1]);
+  if (!v) return fail("Video not found.", 404);
+  if (v.releasedAt) return fail("This video already started posting.");
+  await q.updateVideo(v.id, (x) => {
+    x.approval = decision;
+    x.approvedBy = user;
+    x.approvalNote = decision === "changes" ? note : null;
+    return true;
+  });
+  return json({ ok: true, message: decision === "approved" ? "Approved ✅ It will post at its time." : "Sent back with your note." });
+});
+
+// ---- fixed date/time (calendar) ----------------------------------------------------
+route("POST", "/api/videos/([a-z0-9]+)/schedule", async (req, m) => {
+  const b = await body(req);
+  const v = await q.getVideo(m[1]);
+  if (!v) return fail("Video not found.", 404);
+  if (v.releasedAt) return fail("This video already started posting.");
+  let at: string | null = null;
+  if (b.at) {
+    const tz = (await q.getSettings()).timezone;
+    const d = typeof b.at === "string" && /Z$|[+-]\d\d:\d\d$/.test(b.at) ? new Date(b.at) : parseLocalDateTime(String(b.at), tz);
+    if (!d || Number.isNaN(d.getTime())) return fail("That isn't a valid date and time.");
+    if (d.getTime() < Date.now() - 60_000) return fail("Pick a time in the future.");
+    if (d.getTime() > Date.now() + 90 * 86400000) return fail("Pick a time within the next 90 days.");
+    at = d.toISOString();
+  }
+  await q.updateVideo(v.id, (x) => { x.scheduledAt = at; return true; });
+  return json({ ok: true, message: at ? "Time saved. It posts then (once approved)." : "Back to the page's daily times." });
+});
+
+route("GET", "/api/calendar", async (req) => {
+  const days = Math.min(28, Math.max(7, Number(new URL(req.url).searchParams.get("days")) || 14));
+  return json(await buildCalendar(new Date(), days));
+});
+
+// ---- watch a video (in small pieces, so phones can play it) --------------------------
+route("GET", "/api/videos/([a-z0-9]+)/file", async (req, m) => {
+  const v = await q.getVideo(m[1]);
+  if (!v || v.status !== "ready" || v.filesDeleted) return new Response("Not available", { status: 404 });
+  const range = /bytes=(\d+)-(\d*)/.exec(req.headers.get("range") ?? "");
+  const start = range ? Number(range[1]) : 0;
+  if (start >= v.size) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${v.size}` } });
+  // Send at most one stored piece per request (Netlify responses must stay under ~6 MB); browsers ask for the rest.
+  const chunkEnd = (Math.floor(start / v.chunkSize) + 1) * v.chunkSize - 1;
+  const wanted = range && range[2] ? Number(range[2]) : v.size - 1;
+  const end = Math.min(wanted, chunkEnd, v.size - 1);
+  const bytes = await q.readRange(v, start, end - start + 1);
+  return new Response(bytes, {
+    status: 206,
+    headers: { "Content-Type": "video/mp4", "Accept-Ranges": "bytes", "Content-Range": `bytes ${start}-${end}/${v.size}`,
+      "Content-Length": String(end - start + 1), "Cache-Control": "private, max-age=3600" },
+  });
 });
 
 // ---- stories ------------------------------------------------------------------
