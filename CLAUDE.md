@@ -27,9 +27,11 @@ simple English. Do the work end to end and report plainly what changed.
   videos don't use daily slots. Calendar prediction lives in `netlify/lib/calendar.mts`.
 - Batch: Stories board ticks → `maker.html?batch=id,id` → each story is rendered and uploaded straight to the queue
   (stories on credit pages are skipped unless the author said yes).
-- Stories board (`stories/{id}` in Blobs) + browser **Video Maker**: stories are found by a bookmarklet that runs on
-  reddit.com (Reddit blocks unauthenticated API access since 2026; logged-in same-origin fetch still works), rated in
-  the browser, saved to the board. Videos are made **in the browser**: Kokoro TTS (`public/vendor/kokoro.web.js`,
+- Stories board (`stories/{id}` in Blobs) + browser **Video Maker**: stories are found automatically in the browser
+  from the Arctic Shift archive (`public/js/finder.js`; keyless, CORS-enabled; no sort by score, so it pages through
+  recent posts, skips the newest 30 h whose scores aren't updated yet, keeps the top 15 per subreddit, then fetches full
+  text via `/posts/ids`; it backs off on "slow down"). Backup: a bookmarklet on reddit.com (Reddit blocks
+  unauthenticated API access since 2026). Stories are rated in the browser and saved to the board. Videos are made **in the browser**: Kokoro TTS (`public/vendor/kokoro.web.js`,
   model from Hugging Face, ~90 MB cached), canvas drawing, WebCodecs H.264 + AAC (Opus fallback), `mp4-muxer`.
   Background clips come from a local file (File System Access handle in IndexedDB); used minutes are stored in
   `bgused/{key}` so clips don't repeat.

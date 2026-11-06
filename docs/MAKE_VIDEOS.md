@@ -3,15 +3,14 @@
 Everything happens on the website, in **Chrome or Edge on a computer**. Nothing to install.
 
 ## 1. Find stories (📖 Stories page)
-1. Click **📥 Find stories on Reddit**. Drag the **📥 Shorts HQ Finder** button to your bookmarks bar (once).
-2. Open **reddit.com** and make sure you're logged in.
-3. Click the **📥 Shorts HQ Finder** bookmark. A Shorts HQ window opens with the top stories from the best
-   subreddits (AITA, pettyrevenge, MaliciousCompliance, tifu…), each rated ⭐ with its video length.
-4. Tick the ones you like → **Save ticked stories**. Your friend sees the same board.
+1. Click **🔎 Find stories**, tick the subreddits and pick a time (3 days / week / 2 weeks / month).
+2. Click **🔎 Start searching**. No Reddit login needed: the site reads the newest posts from
+   [Arctic Shift](https://arctic-shift.photon-reddit.com) (a free public archive of Reddit), keeps the most upvoted ones,
+   and shows them rated ⭐ with their video length. About a minute for 4 subreddits.
+3. Tick the ones you like → **Save ticked stories**. Your friend sees the same board.
 
-Why a bookmark? Since 2026 Reddit blocks apps from reading stories automatically, but it still works
-when *you* are logged in on reddit.com. On a single Reddit post, the bookmark grabs just that story.
-You can also **Add one by hand** (paste the link, title and text).
+The newest ~day is skipped because the archive only learns the real upvotes about a day later.
+Other ways: the **📥 Shorts HQ Finder** bookmark (on reddit.com while logged in), or **Add one by hand**.
 
 ## 2. Ask the author
 Stories belong to the people who wrote them. On each story click **✉️ Ask the author** (a ready-made

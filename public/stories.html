@@ -13,28 +13,33 @@
   <div class="head">
     <h1>Stories</h1>
     <div class="actions">
-      <button class="btn big" id="findBtn">📥 Find stories on Reddit</button>
+      <button class="btn big" id="findBtn">🔎 Find stories</button>
       <button class="ghost" id="addBtn">✍️ Add one by hand</button>
     </div>
   </div>
 
-  <!-- How to find stories -->
+  <!-- Automatic finder -->
   <div class="card hidden" id="finder">
-    <b>Find the best stories in 3 steps</b>
-    <ol class="steps">
-      <li><b>Once:</b> drag this button to your bookmarks bar →
-        <a class="btn bookmarklet" id="bookmarklet" href="#" onclick="event.preventDefault();flash('Drag this button to your bookmarks bar (don\'t click it here).', true)">📥 Shorts HQ Finder</a>
-        <div class="muted small">No bookmarks bar? Press <b>Ctrl+Shift+B</b> (Mac: <b>⌘+Shift+B</b>).</div></li>
-      <li>Open <a href="https://www.reddit.com" target="_blank" rel="noopener">reddit.com</a> and make sure you're <b>logged in</b>.</li>
-      <li>Click the <b>📥 Shorts HQ Finder</b> bookmark there. This page opens with the top stories, rated ⭐ — tick the ones you like and save.</li>
-    </ol>
-    <div class="muted small">Tip: on a single Reddit post, the bookmark grabs just that story.</div>
+    <b>🔎 Find the best stories automatically</b>
+    <div class="muted small">No Reddit login needed. The site reads the newest posts from a free public archive of Reddit,
+      keeps the most upvoted ones, rates them ⭐ and shows how long each video would be. (The newest ~day is skipped,
+      because their upvotes aren't counted yet.)</div>
     <label>Search these subreddits</label>
     <div id="subs" class="chips"></div>
-    <label for="range">Top stories from the last</label>
+    <label for="range">From the last</label>
     <select id="range" style="max-width:260px">
-      <option value="day">day</option><option value="week" selected>week</option><option value="month">month</option><option value="year">year</option><option value="all">all time</option>
+      <option value="3">3 days</option><option value="7" selected>week</option><option value="14">2 weeks</option><option value="30">month</option>
     </select>
+    <p class="actions"><button class="big" id="startFind">🔎 Start searching</button> <button class="ghost hidden" id="stopFind">Stop</button></p>
+    <details style="margin-top:10px"><summary class="muted small">Other way: grab stories from Reddit while you're logged in (bookmark)</summary>
+      <ol class="steps">
+        <li><b>Once:</b> drag this button to your bookmarks bar →
+          <a class="btn ghost bookmarklet" id="bookmarklet" href="#" onclick="event.preventDefault();flash('Drag this button to your bookmarks bar (don\'t click it here).', true)">📥 Shorts HQ Finder</a>
+          <div class="muted small">No bookmarks bar? Press <b>Ctrl+Shift+B</b> (Mac: <b>⌘+Shift+B</b>).</div></li>
+        <li>Open <a href="https://www.reddit.com" target="_blank" rel="noopener">reddit.com</a> (logged in) and click the bookmark there.
+          On a single Reddit post, it grabs just that story.</li>
+      </ol>
+    </details>
   </div>
 
   <!-- Add by hand -->
@@ -82,6 +87,7 @@
   <div id="board"></div>
 </main>
 <script type="module">
+import { findStories } from "/js/finder.js";
 import { STORY_SUBREDDITS, isUsablePost, rateStory, stars, formatCount, formatDuration, estimateSeconds, wordCount, cleanStoryText } from "/js/storylib.js";
 
 const $ = (id) => document.getElementById(id);
@@ -100,7 +106,8 @@ function renderSubs() {
     save("shq-subs", chosenSubs);
   }));
 }
-$("range").value = load("shq-range", "week");
+$("range").value = ["3", "7", "14", "30"].includes(String(load("shq-range", "7"))) ? String(load("shq-range", "7")) : "7";
+const rangeWord = () => (Number($("range").value) <= 3 ? "day" : Number($("range").value) <= 7 ? "week" : "month");
 $("range").addEventListener("change", () => save("shq-range", $("range").value));
 
 // The bookmark: runs on reddit.com (where you're logged in), reads top posts and sends them here.
@@ -112,7 +119,7 @@ function bookmarkletCode(site) {
 // ---------- receiving stories from the bookmark ----------
 function setStatus(html) { $("importBox").classList.remove("hidden"); $("importStatus").innerHTML = html; }
 
-function receive(posts, errors) {
+function receive(posts, errors, source = "bookmark") {
   const saved = new Set(BOARD.map((s) => s.id));
   const seen = new Set();
   FOUND = posts.filter((p) => p && p.id && !seen.has(p.id) && seen.add(p.id) && isUsablePost(p)).map((p) => {
@@ -122,7 +129,9 @@ function receive(posts, errors) {
   const unusable = posts.length - FOUND.length;
   setStatus(`Found <b>${FOUND.length}</b> usable stories${unusable > 0 ? ` (${unusable} skipped: links, NSFW, pinned or too short)` : ""}.`
     + (errors?.length ? `<div class="err">Some subreddits didn't load: ${esc(errors.join(" · "))}</div>` : "")
-    + (posts.length === 0 ? `<div class="err">Reddit didn't return anything. Make sure you're logged in on reddit.com, or open a single story and click the bookmark there.</div>` : ""));
+    + (posts.length === 0 ? (source === "archive"
+      ? `<div class="err">No stories found. Try more subreddits or a longer time (2 weeks / month).</div>`
+      : `<div class="err">Reddit didn't return anything. Make sure you're logged in on reddit.com, or open a single story and click the bookmark there.</div>`) : ""));
   // tick the best ones that fit one video and aren't saved yet
   FOUND.forEach((f, i) => (f.tick = !f.saved && i < 10 && f.estSeconds <= 170));
   renderFound();
@@ -171,6 +180,25 @@ window.addEventListener("message", (e) => {
   if (e.data.type === "shq-progress") setStatus(esc(e.data.text));
   if (e.data.type === "shq-stories" && Array.isArray(e.data.posts)) receive(e.data.posts.slice(0, 1000), e.data.errors || []);
 });
+
+// ---------- automatic finder (no login) ----------
+let finding = null;
+$("startFind").addEventListener("click", async () => {
+  if (!chosenSubs.length) return flash("Tick at least one subreddit.", true);
+  finding = new AbortController();
+  $("startFind").disabled = true; $("stopFind").classList.remove("hidden");
+  setStatus("Starting…");
+  try {
+    const r = await findStories({ subs: chosenSubs, days: Number($("range").value), signal: finding.signal, onProgress: (t) => setStatus(esc(t)) });
+    receive(r.posts, r.errors, "archive");
+    setStatus($("importStatus").innerHTML + `<div class="muted small">Checked ${r.scanned.toLocaleString()} posts.</div>`);
+  } catch (e) {
+    setStatus(`<span class="err">${esc(e.message || String(e))}</span>`);
+  } finally {
+    $("startFind").disabled = false; $("stopFind").classList.add("hidden"); finding = null;
+  }
+});
+$("stopFind").addEventListener("click", () => finding?.abort());
 
 // ---------- add by hand ----------
 $("manualForm").addEventListener("submit", async (e) => {
@@ -282,7 +310,7 @@ const importMode = new URLSearchParams(location.search).has("import");
   await loadBoard();
   if (importMode) {
     setStatus("Waiting for Reddit…");
-    if (window.opener) window.opener.postMessage({ type: "shq-ready", subs: chosenSubs.length ? chosenSubs : STORY_SUBREDDITS.slice(0, 6), t: $("range").value }, "*");
+    if (window.opener) window.opener.postMessage({ type: "shq-ready", subs: chosenSubs.length ? chosenSubs : STORY_SUBREDDITS.slice(0, 6), t: rangeWord() }, "*");
     else setStatus("Open this from the 📥 Shorts HQ Finder bookmark on reddit.com.");
   }
 })();
