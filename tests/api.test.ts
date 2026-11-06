@@ -45,7 +45,7 @@ function mp4Bytes(size: number) {
 describe("login", () => {
   it("setup once, then login/logout", async () => {
     const anon = new Browser();
-    expect((await anon.call("GET", "/api/me")).json).toEqual({ user: null, needsSetup: true });
+    expect((await anon.call("GET", "/api/me")).json).toEqual({ user: null, needsSetup: true, pages: [] });
     const b = await loggedIn();
     expect((await b.call("GET", "/api/me")).json.user).toBe("alice");
     expect((await new Browser().call("POST", "/api/setup", { username: "evil", password: "password123" })).status).toBe(403);

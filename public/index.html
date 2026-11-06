@@ -9,18 +9,18 @@
 </head>
 <body class="hidden">
 <main>
+  <div class="head">
+    <h1>Queue</h1>
+    <a class="btn dark" id="newBtn" href="/upload.html">+ New video</a>
+  </div>
   <div id="flash" class="flash hidden"></div>
   <div id="problems"></div>
-  <div class="head">
-    <h1>Your queue</h1>
-    <a class="btn big" id="newBtn" href="/upload.html">+ New video</a>
-  </div>
   <div class="ptabs" id="tabs"></div>
   <div id="page"></div>
 </main>
 <script>
 let DATA = null, TZ = "UTC";
-let current = (() => { try { return localStorage.getItem("page") || "p1"; } catch (_) { return "p1"; } })();
+let current = new URLSearchParams(location.search).get("page") || (() => { try { return localStorage.getItem("page") || "p1"; } catch (_) { return "p1"; } })();
 const NAMES = { youtube: "YouTube", instagram: "Instagram" };
 const SHORT = { youtube: "YT", instagram: "IG" };
 
@@ -58,90 +58,108 @@ function notes(v) {
   return h ? `<div class="notes">${h}</div>` : "";
 }
 
-function tile(v, kind, i, total) {
-  const label = kind === "queued" ? `<span class="num">#${i + 1}</span>` : kind === "active" ? `<span class="num live">LIVE</span>` : "";
-  const meta = kind === "done" ? fmtDate(v.releasedAt, TZ) : `by ${esc(v.uploader)} · ${Math.round(v.duration)}s`;
-  let acts = "";
+/** One video as a list row (design: Clean Studio). kind: queued | active | done | unfinished */
+function row(v, kind, i, total) {
+  const label = kind === "queued" ? `#${i + 1}` : kind === "active" ? "LIVE" : "";
+  const meta = kind === "done" ? `by ${esc(v.uploader)} · posted ${fmtDate(v.releasedAt, TZ)}` : `by ${esc(v.uploader)} · ${formatLen(v.duration)}`;
   const waitingApproval = v.approval === "pending" || v.approval === "changes";
-  if (kind === "queued") {
-    acts = `${v.status === "ready" && !waitingApproval ? `<button onclick="if(confirm('Post this video now?'))act('${v.id}','post-now')">Post now</button>` : ""}
-      ${v.status === "ready" ? `<button class="icon" title="Watch" onclick="watch('${v.id}')">▶</button>
-      <button class="icon" title="Set a date and time" onclick="setTime('${v.id}', ${v.scheduledAt ? `'${v.scheduledAt}'` : "null"})">🗓</button>` : ""}
-      <span class="grow"></span>
-      <button class="icon" title="Move earlier" ${i === 0 ? "disabled" : ""} onclick="act('${v.id}','move',{direction:-1})">↑</button>
-      <button class="icon" title="Move later" ${i === total - 1 ? "disabled" : ""} onclick="act('${v.id}','move',{direction:1})">↓</button>`;
-  }
+  let pills = "";
+  if (kind === "active") pills += `<span class="d up">● Posting</span>`;
+  if (kind === "queued" && v.approval === "pending") pills += `<span class="d wait">⏳ Needs approval</span>`;
+  if (kind === "queued" && v.approval === "changes") pills += `<span class="d bad">✏️ Sent back</span>`;
+  if (kind === "queued" && v.scheduledAt) pills += `<span class="d">🗓 ${fmtDate(v.scheduledAt, TZ)}</span>`;
+  pills += postDots(v);
+
+  let ra = "";
   const del = `<button class="icon" title="Delete" onclick="if(confirm('Remove this video from the website? (Already-published posts stay online.)'))act('${v.id}','delete')">🗑</button>`;
-  const edit = kind === "queued" ? `<details><summary>Edit text</summary>
+  if (kind === "queued" && v.approval === "pending") {
+    const mine = v.uploader === DATA.me;
+    ra = `<button onclick="approve('${v.id}', ${mine})">Approve</button><button class="ghost" onclick="watch('${v.id}')">Watch</button>`;
+  } else if (kind === "queued") {
+    ra = `${v.status === "ready" ? `<button class="icon" title="Watch" onclick="watch('${v.id}')">▶</button>
+      <button class="icon" title="Set a date and time" onclick="setTime('${v.id}', ${v.scheduledAt ? `'${v.scheduledAt}'` : "null"})">🗓</button>` : ""}
+      ${v.status === "ready" && !waitingApproval ? `<button onclick="if(confirm('Post this video now?'))act('${v.id}','post-now')">Post now</button>` : ""}`;
+  } else if (kind === "unfinished") {
+    ra = del;
+  }
+  const more = kind === "queued" ? `<details><summary>More</summary>
+      <div class="actions" style="margin:8px 0">
+        <button class="ghost" ${i === 0 ? "disabled" : ""} onclick="act('${v.id}','move',{direction:-1})">↑ Earlier</button>
+        <button class="ghost" ${i === total - 1 ? "disabled" : ""} onclick="act('${v.id}','move',{direction:1})">↓ Later</button>
+        ${v.approval === "pending" ? `<button class="ghost" onclick="sendBack('${v.id}')">✏️ Send back</button>` : ""}
+        ${del}
+      </div>
       <form onsubmit="event.preventDefault();act('${v.id}','edit',{title:this.t.value,description:this.d.value})">
         <label>Title</label><input name="t" type="text" maxlength="100" required value="${esc(v.title)}">
         <label>Caption</label><textarea name="d" maxlength="2000">${esc(v.description)}</textarea>
-        <p><button type="submit">Save</button></p>
-      </form></details>` : "";
+        <p><button class="dark" type="submit">Save text</button></p>
+      </form></details>` : kind === "done" || kind === "active" ? `<details><summary>More</summary><div class="actions" style="margin:8px 0">${del}</div></details>` : "";
   let approval = "";
-  if (kind === "queued" && v.approval === "pending") {
-    const mine = v.uploader === DATA.me;
-    approval = `<div class="approve">
-      <div class="small">⏳ <b>Waiting for approval</b>${mine ? " — your friend will check it" : ` — made by ${esc(v.uploader)}`}</div>
-      <div class="acts" style="padding:8px 0 0">
-        <button onclick="approve('${v.id}', ${mine})">✅ Approve</button>
-        <button class="ghost" onclick="sendBack('${v.id}')">✏️ Send back</button>
-      </div></div>`;
+  if (kind === "queued" && v.approval === "pending" && v.uploader !== DATA.me) {
+    approval = `<div class="approve">⏳ <b>${esc(v.uploader)}</b> made this. Watch it, then tap <b>Approve</b> — or <a href="#" onclick="event.preventDefault();sendBack('${v.id}')">send it back</a> with a note.</div>`;
   } else if (kind === "queued" && v.approval === "changes") {
-    approval = `<div class="approve changes"><div class="small">✏️ <b>Sent back by ${esc(v.approvedBy || "")}:</b> ${esc(v.approvalNote || "")}</div>
-      <div class="small muted">Fix the text below (it goes back for approval), make a new video, or approve it anyway.</div>
-      <div class="acts" style="padding:8px 0 0"><button class="ghost" onclick="approve('${v.id}', true)">✅ Approve anyway</button></div></div>`;
+    approval = `<div class="approve changes">✏️ <b>Sent back by ${esc(v.approvedBy || "")}:</b> ${esc(v.approvalNote || "")}<br>
+      <span class="muted">Fix the text under “More” (it goes back for approval), make a new video, or
+      <a href="#" onclick="event.preventDefault();approve('${v.id}', true)">approve it anyway</a>.</span></div>`;
   }
-  const fixed = kind === "queued" && v.scheduledAt ? `<div class="notes"><div>🗓 <b>${fmtDate(v.scheduledAt, TZ)}</b> (fixed time)</div></div>` : "";
-  return `<div class="tile">
-    <div class="pic">${label}<img src="/api/thumb/${v.id}" alt="" loading="lazy" onerror="this.remove()">
-      <div class="ov" title="${esc(statsTitle(v))}"><div class="t">${esc(v.title)}</div><div class="m">${meta}</div>${statsLine(v)}<div class="dots">${postDots(v)}</div></div></div>
-    ${approval}${fixed}${notes(v)}
-    <div class="acts">${acts || '<span class="grow"></span>'}${del}</div>
-    ${edit}
+  return `<div class="row">
+    <span class="num ${kind === "active" ? "live" : ""}">${label}</span>
+    <img class="thumb" src="/api/thumb/${v.id}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+    <div class="x" title="${esc(statsTitle(v))}">
+      <div class="t">${esc(v.title)}</div>
+      <div class="m">${meta}</div>
+      ${statsLine(v)}
+      <div class="dots">${pills}</div>
+      ${approval}${notes(v)}${more}
+    </div>
+    <div class="ra">${ra}</div>
   </div>`;
 }
 
-function section(title, list, kind, emptyText) {
-  if (!list.length && !emptyText) return "";
-  return `<h2>${title}</h2>` + (list.length
-    ? `<div class="grid">${list.map((v, i) => tile(v, kind, i, list.length)).join("")}</div>`
-    : `<div class="empty">${emptyText}</div>`);
+const formatLen = (s) => `${Math.floor((s || 0) / 60)}:${String(Math.round((s || 0) % 60)).padStart(2, "0")}`;
+
+function list(title, items, emptyText, right = "") {
+  if (!items.length && !emptyText) return "";
+  return `<div class="list"><div class="lh">${title}<span>${right}</span></div>`
+    + (items.length ? items.join("") : `<div class="empty" style="border:0;border-radius:0">${emptyText}</div>`) + `</div>`;
 }
 
 function render() {
   const d = DATA;
   if (!d.pages.find(p => p.id === current)) current = d.pages[0].id;
-  document.getElementById("problems").innerHTML = (d.toApprove ? `<div class="banner ok">⏳ <b>${d.toApprove} ${d.toApprove === 1 ? "video is" : "videos are"} waiting for your approval.</b> Watch them (▶) and tap ✅ Approve.</div>` : "")
+  document.getElementById("problems").innerHTML = (d.toApprove ? `<div class="banner ok">⏳ <b>${d.toApprove} ${d.toApprove === 1 ? "video is" : "videos are"} waiting for your approval.</b> Watch and tap Approve.</div>` : "")
     + d.problems.map(p => `<div class="banner">⚠ ${esc(p)} <a href="/settings.html">Fix in Settings</a></div>`).join("");
   document.getElementById("tabs").innerHTML = d.pages.map(p =>
     `<button class="${p.id === current ? "on" : ""}" onclick="pick('${p.id}')">${esc(p.name)} <span class="count">${p.queued.length}</span>${p.queued.some((v) => v.approval === "pending" && v.uploader !== d.me) ? " ⏳" : ""}</button>`).join("");
   const p = d.pages.find(x => x.id === current);
   document.getElementById("newBtn").href = "/upload.html?page=" + p.id;
-  const acc = [p.accounts.youtube && "YouTube " + p.accounts.youtube, p.accounts.instagram && "Instagram " + p.accounts.instagram].filter(Boolean).join(" · ");
-  const next = p.nextSlot
-    ? `<div class="next"><div class="clock">⏰</div><div><b>Next drop: ${fmtTime(p.nextSlot, TZ)}</b><small>${p.queued[0] ? `"${esc(p.queued[0].title)}" goes out` : "Nothing waiting. Upload a video for this page."}${acc ? " · " + esc(acc) : ""}</small></div></div>`
-    : `<div class="next"><div class="clock">⏸</div><div><b>No posting times for ${esc(p.name)}</b><small>Videos only post when you press "Post now". <a href="/settings.html">Set times</a></small></div></div>`;
+  const toApprove = p.queued.filter((v) => v.approval === "pending" && v.uploader !== d.me).length;
+  const nextDay = p.nextSlot ? new Date(p.nextSlot).toLocaleDateString(undefined, { timeZone: TZ, weekday: "long" }) : "";
+  const isToday = p.nextSlot && new Date(p.nextSlot).toDateString() === new Date().toDateString();
+  const views = p.totals.youtubeViews + p.totals.instagramViews;
+  const kpis = `<div class="kpis">
+    <div class="kpi"><span>Next post</span><b>${p.nextSlot ? new Date(p.nextSlot).toLocaleTimeString(undefined, { timeZone: TZ, hour: "2-digit", minute: "2-digit" }) : "—"}</b>
+      <small class="${p.nextSlot ? "" : "muted"}">${p.nextSlot ? (isToday ? "today" : nextDay) : '<a href="/settings.html">set posting times</a>'}</small></div>
+    <div class="kpi"><span>Views (all posts)</span><b>${fmtN(views)}</b><small class="muted">YT ${fmtN(p.totals.youtubeViews)} · IG ${fmtN(p.totals.instagramViews)}</small></div>
+    <div class="kpi"><span>Waiting</span><b>${p.queued.length}</b><small class="muted">${p.queued[0] ? "next: " + esc(p.queued[0].title.slice(0, 28)) + (p.queued[0].title.length > 28 ? "…" : "") : "queue is empty"}</small></div>
+    <div class="kpi"><span>To approve</span><b>${toApprove}</b><small class="muted">${p.publishedCount} posted so far</small></div>
+  </div>`;
   let stats = "";
   if (p.publishedCount) {
     const best = p.bestTimes.length
-      ? `<div class="small" style="margin-top:10px"><b>Best posting times</b> (average views per video)<div class="times">${p.bestTimes.slice(0, 5).map((t, i) =>
+      ? `<div class="small" style="margin-top:4px"><b>Best posting times</b> <span class="muted">(average views per video)</span><div class="times">${p.bestTimes.slice(0, 5).map((t, i) =>
           `<div class="trow"><span>${i === 0 ? "🏆 " : ""}${t.time}</span><span class="bar"><i style="width:${Math.max(4, Math.round(t.avgViews / Math.max(1, p.bestTimes[0].avgViews) * 100))}%"></i></span><span>${fmtN(t.avgViews)} <span class="muted">· ${t.videos} video${t.videos > 1 ? "s" : ""}</span></span></div>`).join("")}</div>
           <div class="muted small">Tip: try a few different times for 2–3 weeks, then keep the best ones in Settings.</div></div>`
-      : `<div class="muted small" style="margin-top:8px">Numbers show up a few hours after posting.</div>`;
-    stats = `<div class="card statsbox"><div class="statrow">
-        <div><b>${fmtN(p.totals.youtubeViews)}</b><span>YouTube views</span></div>
-        <div><b>${fmtN(p.totals.instagramViews)}</b><span>Instagram views</span></div>
-        <div><b>${fmtN(p.totals.likes)}</b><span>Likes</span></div>
-        <div><b>${p.publishedCount}</b><span>Posted</span></div></div>
-      ${best}
-      <div class="muted small" style="margin-top:8px">${p.lastStatsRun ? "Updated " + fmtDate(p.lastStatsRun, TZ) + " · " : ""}<button class="link" onclick="refreshStats()">Update now</button></div></div>`;
+      : `<div class="muted small">Numbers show up a few hours after posting.</div>`;
+    stats = `<div class="card statsbox">${best}
+      <div class="muted small" style="margin-top:8px">${esc(fmtN(p.totals.likes))} likes in total · ${p.lastStatsRun ? "updated " + fmtDate(p.lastStatsRun, TZ) + " · " : ""}<button class="link" onclick="refreshStats()">Update now</button></div></div>`;
   }
-  document.getElementById("page").innerHTML = next + stats
-    + section("Unfinished uploads (upload again, or delete)", p.unfinished || [], "unfinished")
-    + section("Posting now", p.active, "active")
-    + section(`Up next (${p.queued.length})`, p.queued, "queued", `No videos waiting for ${esc(p.name)}. <a href="/upload.html?page=${p.id}">Upload one</a>`)
-    + section(`Posted (${p.publishedCount})`, p.done, "done");
+  const upNext = [...p.active.map((v) => row(v, "active", 0, 1)), ...p.queued.map((v, i) => row(v, "queued", i, p.queued.length))];
+  document.getElementById("page").innerHTML = kpis
+    + list("Unfinished uploads", (p.unfinished || []).map((v) => row(v, "unfinished", 0, 1)), "", "upload again, or delete")
+    + list("Up next", upNext, `No videos waiting for ${esc(p.name)}. <a href="/upload.html?page=${p.id}">Upload one</a> or <a href="/stories.html">make one from a story</a>.`, p.queued.length > 1 ? "Reorder under “More”" : "")
+    + stats
+    + list(`Posted (${p.publishedCount})`, p.done.map((v) => row(v, "done", 0, 1)), "");
   window.__busy = d.pages.some(x => x.active.length);
 }
 

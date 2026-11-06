@@ -41,14 +41,21 @@ const NAV = [
 ];
 
 /** Draws the sidebar (computer) and top bar + bottom tabs (phone) around <main>. */
-function shell(user) {
+function shell(user, pages = []) {
   const here = location.pathname === "/index.html" ? "/" : location.pathname === "/maker.html" ? "/stories.html" : location.pathname;
-  const links = NAV.map(([href, icon, label]) => `<a href="${href}" class="${href === here ? "on" : ""}"><b>${icon}</b> ${label}</a>`).join("");
-  const logo = `<a class="logo" href="/"><i>●</i> <span>SHORTS HQ</span></a>`;
+  const link = ([href, icon, label]) => `<a href="${href}" class="${href === here ? "on" : ""}"><b>${icon}</b> ${label}</a>`;
+  const mainNav = NAV.filter(([h]) => h !== "/settings.html");
+  const links = NAV.map(link).join(""); // phone tab bar: everything
+  const dots = ["🟠", "🟣", "🔵", "🟢"];
+  const pageLinks = pages.map((p, i) => `<a href="/?page=${encodeURIComponent(p.id)}"><b>${dots[i] || "⚪"}</b> ${esc(p.name)}</a>`).join("");
+  const sideLinks = mainNav.map(link).join("")
+    + (pageLinks ? `<div class="sec">Pages</div>${pageLinks}` : "")
+    + `<div class="sec">Account</div>${link(["/settings.html", "⚙", "Settings"])}`;
+  const logo = `<a class="logo" href="/"><i>▶</i>Shorts HQ</a>`;
   const main = document.querySelector("main");
   const app = document.createElement("div");
   app.className = "app";
-  app.innerHTML = `<aside class="side">${logo}<nav class="nav">${links}</nav>
+  app.innerHTML = `<aside class="side">${logo}<nav class="nav">${sideLinks}</nav>
     <div class="who"><b>${esc(user)}</b>logged in<br><button class="link" onclick="logout()">Log out</button></div></aside>`;
   main.parentNode.insertBefore(app, main);
   app.appendChild(main);
@@ -60,7 +67,7 @@ async function requireUser() {
   const r = await api("/api/me");
   if (r.data.needsSetup) { location.href = "/login.html?setup=1"; return null; }
   if (!r.data.user) { location.href = "/login.html"; return null; }
-  shell(r.data.user);
+  shell(r.data.user, r.data.pages || []);
   document.body.classList.remove("hidden");
   return r.data.user;
 }

@@ -45,7 +45,7 @@ simple English. Do the work end to end and report plainly what changed.
   (rating, text cleanup, parts, caption timing, clip choice — unit tested), `tts.js`, `render.js`, `bglib.js`;
   server side `netlify/lib/stories.mts`.
 - Frontend: plain HTML/JS in `public/`; shared helpers + layout in `public/app.js`; all colors in the THEME block
-  at the top of `public/style.css` (current design: "Dark"; the owner may ask to switch to "Clean" or "Playful").
+  at the top of `public/style.css` (current design: "Clean Studio" — light, Reddit orange, list-style queue with KPI cards; the previous "Dark" design is in git history).
 
 ## Rules that prevent the mistakes this project exists to avoid
 - Never post twice: every platform post has its own state; save resume info before each risky step.

@@ -552,7 +552,8 @@ export async function handle(req: Request, ctx: Ctx = {}): Promise<Response> {
     // Public endpoints
     if (path === "/api/me" && req.method === "GET") {
       const user = await auth.currentUser(req);
-      return json({ user, needsSetup: !user && (await auth.userCount()) === 0 });
+      const pages = user ? Object.entries((await q.getSettings()).pages).map(([id, p]) => ({ id, name: p.name })) : [];
+      return json({ user, needsSetup: !user && (await auth.userCount()) === 0, pages });
     }
     if (path === "/api/setup" && req.method === "POST") {
       if ((await auth.userCount()) > 0) return fail("Setup is already done. Please log in.", 403);
