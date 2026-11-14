@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Insights · Shorts HQ</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js"></script>
+</head>
+<body class="hidden">
+<main>
+  <div class="head">
+    <div><h1>Insights</h1><p class="sub">How your posted videos are doing, and what to do more of.</p></div>
+    <button class="ghost" onclick="refreshStats()">Refresh numbers</button>
+  </div>
+  <div id="flash" class="flash hidden"></div>
+  <div id="problems"></div>
+  <div class="ptabs" id="tabs"></div>
+  <div id="page"></div>
+</main>
+<script>window.VIEW = "insights";</script>
+<script src="/js/board.js"></script>
+</body>
+</html>

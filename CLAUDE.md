@@ -46,8 +46,12 @@ simple English. Do the work end to end and report plainly what changed.
 - Story/video maker: `public/stories.html` (finder bookmarklet + board), `public/maker.html`, `public/js/storylib.js`
   (rating, text cleanup, parts, caption timing, clip choice — unit tested), `tts.js`, `render.js`, `bglib.js`;
   server side `netlify/lib/stories.mts`.
-- Frontend: plain HTML/JS in `public/`; shared helpers + layout in `public/app.js`; all colors in the THEME block
-  at the top of `public/style.css` (current design: "Clean Studio" — light, Reddit orange, list-style queue with KPI cards; the previous "Dark" design is in git history).
+- Frontend: plain HTML/JS in `public/`; shared helpers + sidebar in `public/app.js`. The video pages
+  `index.html` (Queue), `review.html`, `history.html`, `insights.html` are thin shells that set `window.VIEW` and
+  load `public/js/board.js` (one data call, `/api/dashboard`, four views). All colors are in the THEME block at the
+  top of `public/style.css`. Current design: "Studio Dark", made to match the owner's other app (Leonida Moments):
+  black page, dark sidebar with section labels and line icons, blue highlight, pill buttons, big title + grey
+  subtitle on every page, dark rounded empty-state cards, no emoji in the UI. Keep new pages in this style.
 
 ## Rules that prevent the mistakes this project exists to avoid
 - Never post twice: every platform post has its own state; save resume info before each risky step.

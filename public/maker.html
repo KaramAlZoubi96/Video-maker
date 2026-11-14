@@ -10,7 +10,7 @@
 <body class="hidden">
 <main>
   <div id="flash" class="flash hidden"></div>
-  <div class="head"><h1>🎬 Make a video</h1><a class="btn ghost" href="/stories.html">← Stories</a></div>
+  <div class="head"><div><h1>Make a video</h1><p class="sub">Voice, captions and background are added for you.</p></div><a class="btn ghost" href="/stories.html">Back to stories</a></div>
   <div id="support" class="banner hidden"></div>
 
   <div class="maker">
@@ -39,7 +39,7 @@
           <div><label for="voice">Voice</label><select id="voice"></select></div>
           <div><label for="speed">Speed: <span id="speedVal">1.1</span>×</label><input id="speed" type="range" min="0.85" max="1.4" step="0.05" value="1.1"></div>
         </div>
-        <p><button class="ghost" id="testVoice">▶ Test the voice</button> <span class="muted small" id="voiceNote">The first time, the voice downloads (~90 MB). After that it's instant.</span></p>
+        <p><button class="ghost" id="testVoice">Test the voice</button> <span class="muted small" id="voiceNote">The first time, the voice downloads (~90 MB). After that it's instant.</span></p>
       </div>
 
       <!-- 3. Background -->
@@ -47,7 +47,7 @@
         <b>3. Background video</b>
         <div class="muted small">Choose a long gameplay video (for example 2 hours of Minecraft parkour) once. Every video takes a different random part of it, exactly as long as the story. The big file stays on your computer.</div>
         <div id="bgList" class="bglist"></div>
-        <p><button class="ghost" id="addBg">＋ Add a background video</button></p>
+        <p><button class="ghost" id="addBg">Add a background video</button></p>
       </div>
     </div>
 
@@ -67,7 +67,7 @@
       <!-- 5. Make -->
       <div class="card">
         <b>5. Make it</b>
-        <p><button class="big" id="make">🎬 Make the video</button> <button class="ghost hidden" id="stop">Stop</button></p>
+        <p><button class="big" id="make">Make the video</button> <button class="ghost hidden" id="stop">Stop</button></p>
         <div class="progress" id="pb"><div></div></div>
         <div id="status" class="small muted">Keep this tab open while it works (about as long as the video).</div>
         <canvas id="preview" width="270" height="480" class="previewCanvas"></canvas>
@@ -261,7 +261,7 @@ function renderBatch() {
   $("batchList").querySelectorAll("[data-ok]").forEach((c) => c.addEventListener("change", () => { BATCH[c.dataset.ok].ok = c.checked; }));
   updateBatchBtn();
 }
-const updateBatchBtn = () => { $("make").textContent = `🎬 Make all ${BATCH.filter((s) => s.include).length} videos`; };
+const updateBatchBtn = () => { $("make").textContent = `Make all ${BATCH.filter((s) => s.include).length} videos`; };
 const setState = (i, text) => { BATCH[i].state = text; const el = document.querySelector(`[data-st="${i}"]`); if (el) el.textContent = text; };
 
 async function makeBatch() {
@@ -278,20 +278,20 @@ async function makeBatch() {
     for (let k = 0; k < list.length; k++) {
       const { s, i } = list[k];
       if (abort.signal.aborted) break;
-      if (page?.needsCredit && needsOk(s) && !s.ok) { setState(i, "⏭ skipped: author hasn't said yes"); skipped++; continue; }
-      const pf = (p, t) => { progress(Math.round(((k + p / 100) / list.length) * 100), `Video ${k + 1} of ${list.length}: ${t}`); setState(i, `⏳ ${p}%`); };
+      if (page?.needsCredit && needsOk(s) && !s.ok) { setState(i, "skipped: author hasn't said yes"); skipped++; continue; }
+      const pf = (p, t) => { progress(Math.round(((k + p / 100) / list.length) * 100), `Video ${k + 1} of ${list.length}: ${t}`); setState(i, `${p}%`); };
       try {
         if (page?.needsCredit) await api(`/api/stories/${s.id}`, { json: { status: "allowed" } });
         const title = s.title.trim(), text = cleanStoryText(s.body, { censor: $("bCensor").checked });
         const parts = await produce(s, title, text, bgInfo, bgInfo.used, $("voice").value, Number($("speed").value), pf, async (res) => {
-          setState(i, `⬆ uploading part ${res.part}/${res.total}…`);
+          setState(i, `uploading part ${res.part}/${res.total}…`);
           await uploadVideoBlob(res.blob, {
             pageId, title: res.title, description: $("desc").value, platforms, storyId: s.id,
             credit: page?.needsCredit ? { url: s.url, author: s.author, permission: true } : null,
             width: W, height: H, duration: res.duration, thumbnail: res.thumbnail, fileName: "story.mp4",
           });
         });
-        setState(i, `✅ in the queue${parts > 1 ? ` (${parts} parts)` : ""}`);
+        setState(i, `in the queue${parts > 1 ? ` (${parts} parts)` : ""}`);
         made++;
       } catch (e) {
         if (abort.signal.aborted) { setState(i, "⏹ stopped"); break; }
@@ -321,8 +321,8 @@ function addResult(r) {
   el.className = "card result";
   el.innerHTML = `<b>${esc(r.title)}</b> <span class="muted small">${formatDuration(r.duration)} · ${(r.blob.size / 1e6).toFixed(1)} MB</span>
     <video src="${url}" controls playsinline></video>
-    <div class="actions"><button data-q="${i}">📅 Add to queue</button>
-    <a class="btn ghost" href="${url}" download="${esc(r.title.replace(/[^\w\- ]+/g, "").trim() || "video")}.mp4">⬇ Download</a></div>
+    <div class="actions"><button data-q="${i}">Add to queue</button>
+    <a class="btn ghost" href="${url}" download="${esc(r.title.replace(/[^\w\- ]+/g, "").trim() || "video")}.mp4">Download</a></div>
     <div class="small muted" data-s="${i}"></div>`;
   $("results").appendChild(el);
   el.querySelector("[data-q]").addEventListener("click", (e) => addToQueue(i, e.target));
@@ -344,7 +344,7 @@ async function addToQueue(i, btn) {
       credit: page?.needsCredit ? { url: STORY.url, author: STORY.author, permission: true } : null,
       width: W, height: H, duration: r.duration, thumbnail: r.thumbnail, fileName: "story.mp4",
     }, (p) => (status.textContent = `Uploading… ${p}%`));
-    status.innerHTML = `✅ Added to the queue. <a href="/">See the queue</a>`;
+    status.innerHTML = `Added to the queue. <a href="/">See the queue</a>`;
     btn.textContent = "✓ In the queue";
   } catch (e) {
     status.textContent = "";
@@ -357,8 +357,8 @@ async function addToQueue(i, btn) {
 (async () => {
   if (!(await requireUser())) return;
   SUPPORT = await checkSupport();
-  if (!SUPPORT.ok) { $("support").textContent = "⚠ " + SUPPORT.reason; $("support").classList.remove("hidden"); }
-  else if (SUPPORT.muxCodec !== "aac") { $("support").textContent = "⚠ This browser can't make AAC sound, so Instagram may reject these videos. Use Chrome or Edge on Windows or Mac for best results."; $("support").classList.remove("hidden"); }
+  if (!SUPPORT.ok) { $("support").textContent = "" + SUPPORT.reason; $("support").classList.remove("hidden"); }
+  else if (SUPPORT.muxCodec !== "aac") { $("support").textContent = "This browser can't make AAC sound, so Instagram may reject these videos. Use Chrome or Edge on Windows or Mac for best results."; $("support").classList.remove("hidden"); }
   if (params.get("batch")) {
     const ids = params.get("batch").split(",").filter(Boolean);
     const [all, d] = await Promise.all([api("/api/stories"), api("/api/dashboard")]);
@@ -369,7 +369,7 @@ async function addToQueue(i, btn) {
     if (!BATCH.length) { flash("Those stories aren't on the board anymore.", true); $("make").disabled = true; return; }
     STORY = BATCH[0];
     $("storyCard").classList.add("hidden"); $("batchCard").classList.remove("hidden"); $("permRow").classList.add("hidden");
-    document.querySelector("h1").textContent = `🎬 Make ${BATCH.length} videos`;
+    document.querySelector("h1").textContent = `Make ${BATCH.length} videos`;
     $("status").textContent = "Keep this tab open. Each video takes about as long as the story; then it goes straight into the queue.";
     $("page").addEventListener("change", renderBatch);
     $("speed").addEventListener("input", renderBatch);

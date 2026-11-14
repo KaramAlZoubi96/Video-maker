@@ -11,16 +11,16 @@
 <main>
   <div id="flash" class="flash hidden"></div>
   <div class="head">
-    <h1>Stories</h1>
+    <div><h1>Stories</h1><p class="sub">Find the best Reddit stories, then turn them into videos.</p></div>
     <div class="actions">
-      <button class="btn big" id="findBtn">🔎 Find stories</button>
-      <button class="ghost" id="addBtn">✍️ Add one by hand</button>
+      <button id="findBtn">Find new stories</button>
+      <button class="ghost" id="addBtn">Add one by hand</button>
     </div>
   </div>
 
   <!-- Automatic finder -->
   <div class="card hidden" id="finder">
-    <b>🔎 Find the best stories automatically</b>
+    <b>Find the best stories automatically</b>
     <div class="muted small">No Reddit login needed. The site reads the newest posts from a free public archive of Reddit,
       keeps the most upvoted ones, rates them ⭐ and shows how long each video would be. (The newest ~day is skipped,
       because their upvotes aren't counted yet.)</div>
@@ -30,11 +30,11 @@
     <select id="range" style="max-width:260px">
       <option value="3">3 days</option><option value="7" selected>week</option><option value="14">2 weeks</option><option value="30">month</option>
     </select>
-    <p class="actions"><button class="big" id="startFind">🔎 Start searching</button> <button class="ghost hidden" id="stopFind">Stop</button></p>
+    <p class="actions"><button class="big" id="startFind">Start searching</button> <button class="ghost hidden" id="stopFind">Stop</button></p>
     <details style="margin-top:10px"><summary class="muted small">Other way: grab stories from Reddit while you're logged in (bookmark)</summary>
       <ol class="steps">
         <li><b>Once:</b> drag this button to your bookmarks bar →
-          <a class="btn ghost bookmarklet" id="bookmarklet" href="#" onclick="event.preventDefault();flash('Drag this button to your bookmarks bar (don\'t click it here).', true)">📥 Shorts HQ Finder</a>
+          <a class="btn ghost bookmarklet" id="bookmarklet" href="#" onclick="event.preventDefault();flash('Drag this button to your bookmarks bar (don\'t click it here).', true)">Shorts HQ Finder</a>
           <div class="muted small">No bookmarks bar? Press <b>Ctrl+Shift+B</b> (Mac: <b>⌘+Shift+B</b>).</div></li>
         <li>Open <a href="https://www.reddit.com" target="_blank" rel="noopener">reddit.com</a> (logged in) and click the bookmark there.
           On a single Reddit post, it grabs just that story.</li>
@@ -80,7 +80,7 @@
   <h2>Your story board <span class="muted small">(shared with your friend)</span></h2>
   <div class="ptabs" id="statusTabs"></div>
   <div class="actions" id="batchBar" style="margin:0 0 12px">
-    <button id="makeSelected" disabled>🎬 Make selected (0)</button>
+    <button id="makeSelected" disabled>Make selected (0)</button>
     <button class="ghost" id="selectAllowed">Tick all allowed</button>
     <span class="muted small">Tick stories, then make them all in one go — they go straight into the queue.</span>
   </div>
@@ -91,7 +91,7 @@ import { findStories } from "/js/finder.js";
 import { STORY_SUBREDDITS, isUsablePost, rateStory, stars, formatCount, formatDuration, estimateSeconds, wordCount, cleanStoryText } from "/js/storylib.js";
 
 const $ = (id) => document.getElementById(id);
-const STATUS = { new: "🆕 New", asked: "✉️ Asked author", allowed: "✅ Allowed", made: "🎬 Made", queued: "📅 In queue", skipped: "⏭ Skipped" };
+const STATUS = { new: "New", asked: "Asked author", allowed: "Allowed", made: "Made", queued: "In queue", skipped: "Skipped" };
 let BOARD = [], FOUND = [], tab = "open";
 const SELECTED = new Set();
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
@@ -241,22 +241,22 @@ function renderBoard() {
   $("board").innerHTML = list.map((s) => {
     const secs = estimateSeconds(wordCount(cleanStoryText(s.body)));
     return `<div class="card story">
-      <div class="storyhead"><input type="checkbox" class="pick" data-pick="${esc(s.id)}" ${SELECTED.has(s.id) ? "checked" : ""} title="Tick to make in a batch"> <span class="stars">${stars(s.rating)}</span> <b>${s.rating}</b> <span class="badge">${STATUS[s.status]}</span>
-        ${s.pickedBy ? `<span class="badge">🙋 ${esc(s.pickedBy)} is on it</span>` : ""}</div>
+      <div class="storyhead"><input type="checkbox" class="tick" data-pick="${esc(s.id)}" ${SELECTED.has(s.id) ? "checked" : ""} title="Tick to make in a batch"> <span class="stars">${stars(s.rating)}</span> <b>${s.rating}</b> <span class="badge">${STATUS[s.status]}</span>
+        ${s.pickedBy ? `<span class="badge">${esc(s.pickedBy)} is on it</span>` : ""}</div>
       <div class="t">${esc(s.title)}</div>
       <div class="muted small">r/${esc(s.subreddit)} · u/${esc(s.author)} · ▲ ${formatCount(s.score)} · 💬 ${formatCount(s.comments)} · ⏱ ~${formatDuration(secs)}${secs > 170 ? ` · ${Math.ceil(secs / 160)} parts` : ""} · added by ${esc(s.addedBy)}</div>
       <details><summary>Read the story</summary><div class="storytext">${esc(s.body)}</div></details>
       <div class="actions" style="margin-top:10px">
-        <a class="btn" href="/maker.html?story=${encodeURIComponent(s.id)}">🎬 Make video</a>
-        ${s.status === "new" ? `<a class="btn ghost" href="${esc(askLink(s))}" target="_blank" rel="noopener" data-act="asked" data-id="${esc(s.id)}">✉️ Ask the author</a>` : ""}
-        ${["new", "asked"].includes(s.status) ? `<button class="ghost" data-act="allowed" data-id="${esc(s.id)}">✅ Author said yes</button>` : ""}
-        ${s.pickedBy ? `<button class="ghost" data-act="unpick" data-id="${esc(s.id)}">Release</button>` : `<button class="ghost" data-act="pick" data-id="${esc(s.id)}">🙋 I'll do it</button>`}
+        <a class="btn" href="/maker.html?story=${encodeURIComponent(s.id)}">Make video</a>
+        ${s.status === "new" ? `<a class="btn ghost" href="${esc(askLink(s))}" target="_blank" rel="noopener" data-act="asked" data-id="${esc(s.id)}">Ask the author</a>` : ""}
+        ${["new", "asked"].includes(s.status) ? `<button class="ghost" data-act="allowed" data-id="${esc(s.id)}">Author said yes</button>` : ""}
+        ${s.pickedBy ? `<button class="ghost" data-act="unpick" data-id="${esc(s.id)}">Release</button>` : `<button class="ghost" data-act="pick" data-id="${esc(s.id)}">I'll do it</button>`}
         ${s.status === "skipped" ? `<button class="ghost" data-act="new" data-id="${esc(s.id)}">Bring back</button>` : `<button class="ghost" data-act="skipped" data-id="${esc(s.id)}">Skip</button>`}
         ${s.url ? `<a class="btn ghost" href="${esc(s.url)}" target="_blank" rel="noopener">Open on Reddit</a>` : ""}
-        <button class="icon" title="Delete" data-act="delete" data-id="${esc(s.id)}">🗑</button>
+        <button class="danger" data-act="delete" data-id="${esc(s.id)}">Delete</button>
       </div>
     </div>`;
-  }).join("") || `<div class="empty">${tab === "open" ? "No stories yet. Click <b>📥 Find stories on Reddit</b> above." : "Nothing here."}</div>`;
+  }).join("") || `<div class="empty">${tab === "open" ? "<b>No stories yet</b>Press “Find new stories” to search Reddit for the best ones." : "Nothing here."}</div>`;
   $("board").querySelectorAll("[data-pick]").forEach((c) => c.addEventListener("change", () => {
     if (c.checked) SELECTED.add(c.dataset.pick); else SELECTED.delete(c.dataset.pick);
     updateBatchBar();
@@ -277,7 +277,7 @@ function renderBoard() {
 
 function updateBatchBar() {
   for (const id of [...SELECTED]) if (!BOARD.find((s) => s.id === id)) SELECTED.delete(id);
-  $("makeSelected").textContent = `🎬 Make selected (${SELECTED.size})`;
+  $("makeSelected").textContent = `Make selected (${SELECTED.size})`;
   $("makeSelected").disabled = SELECTED.size === 0;
 }
 $("makeSelected").addEventListener("click", () => {
@@ -311,7 +311,7 @@ const importMode = new URLSearchParams(location.search).has("import");
   if (importMode) {
     setStatus("Waiting for Reddit…");
     if (window.opener) window.opener.postMessage({ type: "shq-ready", subs: chosenSubs.length ? chosenSubs : STORY_SUBREDDITS.slice(0, 6), t: rangeWord() }, "*");
-    else setStatus("Open this from the 📥 Shorts HQ Finder bookmark on reddit.com.");
+    else setStatus("Open this from the Shorts HQ Finder bookmark on reddit.com.");
   }
 })();
 </script>

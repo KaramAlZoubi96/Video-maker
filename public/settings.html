@@ -9,7 +9,7 @@
 </head>
 <body class="hidden">
 <main>
-<div class="head"><h1>Settings</h1></div>
+<div class="head"><div><h1>Settings</h1><p class="sub">Pages, accounts, posting times and people.</p></div></div>
 <div id="flash" class="flash hidden"></div>
 
 <h2>Your 2 pages</h2>
@@ -26,7 +26,7 @@
   <select id="privacy"><option value="public">Public</option><option value="unlisted">Unlisted</option><option value="private">Private</option></select>
   <div class="muted small">Until Google approves your API project (audit), YouTube keeps API uploads private. See docs/SETUP_YOUTUBE.md.</div>
   <div class="check" style="margin-top:12px"><input type="checkbox" id="st"> <label for="st">Add #Shorts to YouTube automatically if missing</label></div>
-  <div class="check"><input type="checkbox" id="ra"> <label for="ra">New videos wait until the other person approves them ✅</label></div>
+  <div class="check"><input type="checkbox" id="ra"> <label for="ra">New videos wait until the other person approves them </label></div>
   <p><button type="submit">Save</button></p>
 </form>
 </div>
@@ -76,7 +76,7 @@ function accountRow(page, key, a) {
   let status;
   if (!a) status = `<span class="muted">Not connected</span>`;
   else if (a.status === "ok") status = `✓ <b>${esc(a.displayName)}</b>`;
-  else status = `<span class="err">⚠ ${esc(a.error)}</span>`;
+  else status = `<span class="err">${esc(a.error)}</span>`;
   let actions = "";
   if (canOAuth) actions += `<a class="btn ${a ? "ghost" : ""}" href="/api/connect/${page.id}/${key}">${a ? "Reconnect" : "Connect"}</a>`;
   if (a) actions += `<button class="danger" data-page="${page.id}" data-key="${key}" data-label="${esc(name + " from " + page.name)}" onclick="disconnectAccount(this)">Disconnect</button>`;

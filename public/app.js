@@ -32,42 +32,69 @@ function fmtDate(iso, tz) {
   catch (_) { return new Date(iso).toLocaleString(); }
 }
 
+// Line icons (24x24, drawn with strokes) for the menu.
+const ICONS = {
+  review: '<rect x="5" y="3" width="14" height="18" rx="3"/><path d="M10.5 9.5v5l4-2.5z"/>',
+  queue: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  calendar: '<rect x="3.5" y="5" width="17" height="15" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+  history: '<path d="M4 7h16M4 12h16M4 17h10"/>',
+  insights: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
+  stories: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 21H20v-3"/>',
+  upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+  settings: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
+};
+const icon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+
+// [section, href, icon, label]
 const NAV = [
-  ["/", "🎬", "Queue"],
-  ["/calendar.html", "🗓", "Calendar"],
-  ["/stories.html", "📖", "Stories"],
-  ["/upload.html", "⬆", "Upload"],
-  ["/settings.html", "⚙", "Settings"],
+  ["Videos", "/review.html", "review", "Review"],
+  ["Videos", "/", "queue", "Queue"],
+  ["Videos", "/calendar.html", "calendar", "Calendar"],
+  ["Videos", "/history.html", "history", "History"],
+  ["Videos", "/insights.html", "insights", "Insights"],
+  ["Create", "/stories.html", "stories", "Stories"],
+  ["Create", "/upload.html", "upload", "Upload"],
+  ["Manage", "/settings.html", "settings", "Settings"],
 ];
 
 /** Draws the sidebar (computer) and top bar + bottom tabs (phone) around <main>. */
-function shell(user, pages = []) {
+function shell(user) {
   const here = location.pathname === "/index.html" ? "/" : location.pathname === "/maker.html" ? "/stories.html" : location.pathname;
-  const link = ([href, icon, label]) => `<a href="${href}" class="${href === here ? "on" : ""}"><b>${icon}</b> ${label}</a>`;
-  const mainNav = NAV.filter(([h]) => h !== "/settings.html");
-  const links = NAV.map(link).join(""); // phone tab bar: everything
-  const dots = ["🟠", "🟣", "🔵", "🟢"];
-  const pageLinks = pages.map((p, i) => `<a href="/?page=${encodeURIComponent(p.id)}"><b>${dots[i] || "⚪"}</b> ${esc(p.name)}</a>`).join("");
-  const sideLinks = mainNav.map(link).join("")
-    + (pageLinks ? `<div class="sec">Pages</div>${pageLinks}` : "")
-    + `<div class="sec">Account</div>${link(["/settings.html", "⚙", "Settings"])}`;
-  const logo = `<a class="logo" href="/"><i>▶</i>Shorts HQ</a>`;
+  const link = ([, href, ic, label]) => `<a href="${href}" class="${href === here ? "on" : ""}" data-nav="${ic}">${icon(ic)}<span>${label}</span></a>`;
+  let side = "", last = "";
+  for (const item of NAV) {
+    if (item[0] !== last) { side += `<div class="sec">${item[0]}</div>`; last = item[0]; }
+    side += link(item);
+  }
+  const logo = `<a class="logo" href="/">Shorts HQ<small>Story studio</small></a>`;
   const main = document.querySelector("main");
   const app = document.createElement("div");
   app.className = "app";
-  app.innerHTML = `<aside class="side">${logo}<nav class="nav">${sideLinks}</nav>
-    <div class="who"><b>${esc(user)}</b>logged in<br><button class="link" onclick="logout()">Log out</button></div></aside>`;
+  app.innerHTML = `<aside class="side">${logo}<nav class="nav">${side}</nav>
+    <div class="who"><span class="dot" id="statusDot"></span><span id="statusText">${esc(user)}</span><button class="link" onclick="logout()">Log out</button></div></aside>`;
   main.parentNode.insertBefore(app, main);
   app.appendChild(main);
   document.body.insertAdjacentHTML("afterbegin", `<div class="topbar">${logo}<button class="link" onclick="logout()">Log out</button></div>`);
-  document.body.insertAdjacentHTML("beforeend", `<nav class="tabbar">${links}</nav>`);
+  document.body.insertAdjacentHTML("beforeend", `<nav class="tabbar">${NAV.map(link).join("")}</nav>`);
+  window.__user = user;
+}
+
+/** Bottom-left status: "Posting…" while uploads run, otherwise the user's name. Also the Review counter. */
+function setStatus(busy, toReview) {
+  const dot = document.getElementById("statusDot"), text = document.getElementById("statusText");
+  if (dot) dot.classList.toggle("busy", !!busy);
+  if (text) text.textContent = busy ? "Posting…" : `Idle · ${window.__user || ""}`;
+  document.querySelectorAll('.nav a[data-nav="review"]').forEach((a) => {
+    a.querySelector(".count")?.remove();
+    if (toReview) a.insertAdjacentHTML("beforeend", `<span class="count">${toReview}</span>`);
+  });
 }
 
 async function requireUser() {
   const r = await api("/api/me");
   if (r.data.needsSetup) { location.href = "/login.html?setup=1"; return null; }
   if (!r.data.user) { location.href = "/login.html"; return null; }
-  shell(r.data.user, r.data.pages || []);
+  shell(r.data.user);
   document.body.classList.remove("hidden");
   return r.data.user;
 }
