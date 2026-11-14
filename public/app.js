@@ -41,6 +41,7 @@ const ICONS = {
   insights: '<path d="M5 20V10M12 20V4M19 20v-7"/>',
   stories: '<path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 21H20v-3"/>',
   upload: '<path d="M12 16V4M7 9l5-5 5 5M4 20h16"/>',
+  dreamcore: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/><path d="M16 3v4M14 5h4"/>',
   settings: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
 };
 const icon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -53,14 +54,19 @@ const NAV = [
   ["Videos", "/history.html", "history", "History"],
   ["Videos", "/insights.html", "insights", "Insights"],
   ["Create", "/stories.html", "stories", "Stories"],
+  ["Create", "/dreamcore.html", "dreamcore", "Dreamcore"],
   ["Create", "/upload.html", "upload", "Upload"],
   ["Manage", "/settings.html", "settings", "Settings"],
 ];
 
 /** Draws the sidebar (computer) and top bar + bottom tabs (phone) around <main>. */
-function shell(user) {
+function shell(user, pages = []) {
+  // The Dreamcore menu item carries that page's real name (it can be renamed in Settings).
+  const own = pages.find((p) => /dream/i.test(p.name)) || pages[1];
+  const dream = NAV.find((n) => n[2] === "dreamcore");
+  if (own && dream) dream[3] = own.name;
   const here = location.pathname === "/index.html" ? "/" : location.pathname === "/maker.html" ? "/stories.html" : location.pathname;
-  const link = ([, href, ic, label]) => `<a href="${href}" class="${href === here ? "on" : ""}" data-nav="${ic}">${icon(ic)}<span>${label}</span></a>`;
+  const link = ([, href, ic, label]) => `<a href="${href}" class="${href === here ? "on" : ""}" data-nav="${ic}">${icon(ic)}<span>${esc(label)}</span></a>`;
   let side = "", last = "";
   for (const item of NAV) {
     if (item[0] !== last) { side += `<div class="sec">${item[0]}</div>`; last = item[0]; }
@@ -94,7 +100,7 @@ async function requireUser() {
   const r = await api("/api/me");
   if (r.data.needsSetup) { location.href = "/login.html?setup=1"; return null; }
   if (!r.data.user) { location.href = "/login.html"; return null; }
-  shell(r.data.user);
+  shell(r.data.user, r.data.pages || []);
   document.body.classList.remove("hidden");
   return r.data.user;
 }

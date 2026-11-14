@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dreamcore · Shorts HQ</title>
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js"></script>
+</head>
+<body class="hidden">
+<main>
+  <div class="head">
+    <div><h1 id="h">Dreamcore</h1><p class="sub">Drop in your finished videos. They all go to this page's queue.</p></div>
+    <button class="ghost" id="choose">Choose videos</button>
+  </div>
+  <div id="flash" class="flash hidden"></div>
+  <div class="next" id="info"></div>
+
+  <input type="file" id="files" accept="video/mp4,video/quicktime,.mp4,.mov,.m4v" multiple class="hidden">
+  <div class="empty" id="drop"><b>No videos chosen</b>Press “Choose videos” or drag your files here. You can pick many at once.
+    <div class="small" style="margin-top:6px">MP4 or MOV, vertical, 3–180 seconds, up to 150 MB each.</div></div>
+
+  <div id="chosen" class="hidden">
+    <div class="list"><div class="lh">Videos to add<span id="count"></span></div><div id="rows"></div></div>
+    <div class="card">
+      <label for="desc" style="margin-top:0">Caption for all of them</label>
+      <textarea id="desc" maxlength="2000" style="min-height:80px"></textarea>
+      <div class="muted small" id="tags"></div>
+      <div class="check" style="margin-top:12px"><input type="checkbox" id="yt" checked> <label for="yt">YouTube Shorts <span class="muted small" id="ytName"></span></label></div>
+      <div class="check"><input type="checkbox" id="ig" checked> <label for="ig">Instagram Reels <span class="muted small" id="igName"></span></label></div>
+      <p class="actions" style="margin-bottom:0"><button id="go">Add all to the queue</button> <button class="ghost" id="clear">Clear the list</button></p>
+      <div class="progress" id="pb"><div></div></div>
+      <div class="muted small" id="status" style="margin-top:8px">Keep this page open until the uploads finish.</div>
+    </div>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const MAX = 150 * 1024 * 1024;
+let PAGE = null, ITEMS = [], working = false;
+
+// Read size/length in the browser and grab a thumbnail frame.
+function readVideo(file) {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement("video");
+    v.preload = "auto"; v.muted = true; v.playsInline = true;
+    const url = URL.createObjectURL(file);
+    const bad = () => { cleanup(); reject(new Error("The browser can't read this video. Export it as MP4 (H.264).")); };
+    const t = setTimeout(bad, 20000);
+    const cleanup = () => { clearTimeout(t); URL.revokeObjectURL(url); };
+    v.onerror = bad;
+    v.onloadedmetadata = () => { v.currentTime = Math.min(1, (v.duration || 2) / 2); };
+    v.onseeked = () => {
+      let thumbnail = null;
+      try {
+        const c = document.createElement("canvas"); c.width = 270; c.height = Math.round(270 * v.videoHeight / v.videoWidth) || 480;
+        c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+        thumbnail = c.toDataURL("image/jpeg", 0.7);
+      } catch (_) {}
+      const r = { width: v.videoWidth, height: v.videoHeight, duration: v.duration, thumbnail };
+      cleanup(); resolve(r);
+    };
+    v.src = url;
+  });
+}
+
+function problem(file, m) {
+  if (!/\.(mp4|mov|m4v)$/i.test(file.name)) return "Not an MP4 or MOV file.";
+  if (file.size > MAX) return "Larger than 150 MB.";
+  if (m.width > m.height) return `Horizontal (${m.width}x${m.height}). It must be vertical.`;
+  if (!(m.duration >= 3)) return "Shorter than 3 seconds.";
+  if (m.duration > 180) return `Too long (${Math.round(m.duration)}s). Maximum is 180 seconds.`;
+  return null;
+}
+
+// "my_dream-video 03.mp4" -> "My dream video 03"
+const titleFrom = (name) => { const t = name.replace(/\.[^.]+$/, "").replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100); return t ? t[0].toUpperCase() + t.slice(1) : "Untitled"; };
+const len = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+
+function render() {
+  $("drop").classList.toggle("hidden", ITEMS.length > 0);
+  $("chosen").classList.toggle("hidden", ITEMS.length === 0);
+  const ok = ITEMS.filter((i) => !i.error && i.state !== "done").length;
+  $("count").textContent = `${ITEMS.length} chosen`;
+  $("go").textContent = `Add ${ok} to the queue`;
+  $("go").disabled = working || ok === 0 || ITEMS.some((i) => i.state === "checking");
+  $("rows").innerHTML = ITEMS.map((it, i) => `<div class="row">
+      <span class="num">#${i + 1}</span>
+      ${it.meta?.thumbnail ? `<img class="thumb" src="${it.meta.thumbnail}" alt="">` : `<div class="thumb"></div>`}
+      <div class="x">
+        <input type="text" maxlength="100" value="${esc(it.title)}" data-title="${i}" ${it.state === "done" || working ? "disabled" : ""} aria-label="Title">
+        <div class="m" style="margin-top:4px">${esc(it.file.name)} · ${(it.file.size / 1e6).toFixed(1)} MB${it.meta ? " · " + len(it.meta.duration) : ""}</div>
+        <div class="dots">${it.error ? `<span class="d bad">${esc(it.error)}</span>`
+          : it.state === "checking" ? `<span class="d">Checking…</span>`
+          : it.state === "uploading" ? `<span class="d up">Uploading ${it.pct || 0}%</span>`
+          : it.state === "done" ? `<span class="d ok">In the queue ✓</span>`
+          : `<span class="d">Ready</span>`}</div>
+      </div>
+      <div class="ra">${it.state === "done" || working ? "" : `<button class="ghost" data-remove="${i}">Remove</button>`}</div>
+    </div>`).join("");
+  $("rows").querySelectorAll("[data-title]").forEach((el) => el.addEventListener("input", () => { ITEMS[el.dataset.title].title = el.value; }));
+  $("rows").querySelectorAll("[data-remove]").forEach((el) => el.addEventListener("click", () => { ITEMS.splice(Number(el.dataset.remove), 1); render(); }));
+}
+
+async function addFiles(list) {
+  const files = [...list].filter((f) => !ITEMS.some((i) => i.file.name === f.name && i.file.size === f.size));
+  const added = files.map((file) => ({ file, title: titleFrom(file.name), state: "checking" }));
+  ITEMS.push(...added);
+  render();
+  for (const it of added) {
+    try { it.meta = await readVideo(it.file); it.error = problem(it.file, it.meta); }
+    catch (e) { it.error = e.message; }
+    it.state = "ready";
+    render();
+  }
+}
+
+async function go() {
+  const platforms = [$("yt").checked && "youtube", $("ig").checked && "instagram"].filter(Boolean);
+  if (!platforms.length) return flash("Choose YouTube and/or Instagram.", true);
+  const todo = ITEMS.filter((i) => !i.error && i.state !== "done");
+  if (todo.some((i) => !i.title.trim())) return flash("Every video needs a title.", true);
+  working = true; render();
+  $("pb").style.display = "block";
+  let done = 0, failed = 0;
+  for (const it of todo) {
+    it.state = "uploading"; it.pct = 0; render();
+    try {
+      await uploadVideoBlob(it.file, {
+        pageId: PAGE.id, title: it.title.trim(), description: $("desc").value, platforms, fileName: it.file.name,
+        width: it.meta.width, height: it.meta.height, duration: it.meta.duration, thumbnail: it.meta.thumbnail,
+      }, (p) => { it.pct = p; const el = $("rows").querySelectorAll(".row")[ITEMS.indexOf(it)]?.querySelector(".d.up"); if (el) el.textContent = `Uploading ${p}%`; });
+      it.state = "done"; done++;
+    } catch (e) {
+      it.state = "ready"; it.error = e.message; failed++;
+    }
+    $("pb").firstElementChild.style.width = Math.round(((done + failed) / todo.length) * 100) + "%";
+    $("status").textContent = `${done + failed} of ${todo.length} finished`;
+    render();
+  }
+  working = false; render();
+  $("status").innerHTML = `${done} added to the queue${failed ? `, ${failed} failed (see the red notes above)` : ""}. <a href="/?page=${PAGE.id}">Open the queue</a>`;
+  if (done) flash(`${done} ${done === 1 ? "video is" : "videos are"} in the ${PAGE.name} queue.`, false);
+  loadInfo();
+}
+
+async function loadInfo() {
+  const d = await api("/api/dashboard");
+  if (!d.ok) return null;
+  const pages = d.data.pages;
+  const want = new URLSearchParams(location.search).get("page");
+  // The page for your own videos: the one named like "dream…", else the one that doesn't ask for a story credit.
+  PAGE = pages.find((p) => p.id === want) || pages.find((p) => /dream/i.test(p.name)) || pages.find((p) => !p.needsCredit) || pages[pages.length - 1];
+  $("h").textContent = PAGE.name;
+  document.title = `${PAGE.name} · Shorts HQ`;
+  document.querySelectorAll('.nav a[data-nav="dreamcore"] span, .tabbar a[data-nav="dreamcore"] span').forEach((s) => (s.textContent = PAGE.name));
+  $("info").innerHTML = `<b>${PAGE.queued.length} waiting in the queue.</b> <small>· ${PAGE.nextSlot ? "next post " + fmtTime(PAGE.nextSlot, d.data.timezone) : `no posting times yet, <a href="/settings.html">set them in Settings</a>`}</small>`;
+  $("ytName").innerHTML = PAGE.accounts.youtube ? "→ " + esc(PAGE.accounts.youtube) : '<span class="err">(not connected yet)</span>';
+  $("igName").innerHTML = PAGE.accounts.instagram ? "→ " + esc(PAGE.accounts.instagram) : '<span class="err">(not connected yet)</span>';
+  $("tags").innerHTML = PAGE.hashtags ? `Added automatically: <b>${esc(PAGE.hashtags)}</b> <a href="/settings.html">change</a>` : "";
+  if (PAGE.needsCredit) flash(`“${PAGE.name}” asks for a story link and permission, so use the Upload page for it.`, true);
+  return PAGE;
+}
+
+$("choose").addEventListener("click", () => $("files").click());
+$("files").addEventListener("change", () => { addFiles($("files").files); $("files").value = ""; });
+$("clear").addEventListener("click", () => { if (!working) { ITEMS = []; render(); } });
+$("go").addEventListener("click", go);
+for (const ev of ["dragover", "drop"]) document.addEventListener(ev, (e) => { e.preventDefault(); if (ev === "drop" && e.dataTransfer?.files?.length && !working) addFiles(e.dataTransfer.files); });
+window.addEventListener("beforeunload", (e) => { if (working) e.preventDefault(); });
+
+(async () => { if (await requireUser()) { showUrlMessages(); await loadInfo(); render(); } })();
+</script>
+</body>
+</html>

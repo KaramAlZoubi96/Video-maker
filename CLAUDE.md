@@ -46,6 +46,8 @@ simple English. Do the work end to end and report plainly what changed.
 - Story/video maker: `public/stories.html` (finder bookmarklet + board), `public/maker.html`, `public/js/storylib.js`
   (rating, text cleanup, parts, caption timing, clip choice — unit tested), `tts.js`, `render.js`, `bglib.js`;
   server side `netlify/lib/stories.mts`.
+- `public/dreamcore.html`: bulk upload for the owner's own finished videos (many files at once, title from the
+  file name, one shared caption) into the page named like "dream…" (else the page without story credit).
 - Frontend: plain HTML/JS in `public/`; shared helpers + sidebar in `public/app.js`. The video pages
   `index.html` (Queue), `review.html`, `history.html`, `insights.html` are thin shells that set `window.VIEW` and
   load `public/js/board.js` (one data call, `/api/dashboard`, four views). All colors are in the THEME block at the
