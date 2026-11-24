@@ -11,17 +11,22 @@
 <main>
   <div id="flash" class="flash hidden"></div>
   <div class="head">
-    <div><h1>Calendar</h1><p class="sub">What posts when, for both pages. Drag a video to another day to pin it.</p></div>
+    <div><h1>Calendar</h1><p class="sub">One calendar for each page. Drag a video onto a day to set when it posts.</p></div>
     <div class="actions">
       <select id="days" style="max-width:160px"><option value="7">1 week</option><option value="14" selected>2 weeks</option><option value="28">4 weeks</option></select>
     </div>
   </div>
   <p class="muted small">On a phone, tap a video to change its time. Videos without a fixed time use the page's daily times in queue order.</p>
+  <div class="ptabs" id="tabs"></div>
   <div id="summary"></div>
+  <div id="tray"></div>
   <div class="cal"><div id="grid" class="calgrid"></div></div>
 </main>
 <script>
 let CAL = null;
+let view = new URLSearchParams(location.search).get("page") || (() => { try { return localStorage.getItem("calpage") || "all"; } catch (_) { return "all"; } })();
+const allItems = () => CAL.pages.flatMap((p) => [...p.items, ...p.unplaced]);
+function pickView(id) { view = id; try { localStorage.setItem("calpage", id); } catch (_) {} render(); }
 const $ = (id) => document.getElementById(id);
 const tz = () => CAL.timezone;
 const timeOf = (iso) => new Date(iso).toLocaleTimeString(undefined, { timeZone: tz(), hour: "2-digit", minute: "2-digit" });
@@ -37,8 +42,11 @@ function render() {
     const dt = new Date(d + "T12:00:00");
     return `<div class="calhead ${d === today ? "today" : ""}">${dt.toLocaleDateString(undefined, { weekday: "short" })}<br>${dt.toLocaleDateString(undefined, { day: "numeric", month: "short" })}</div>`;
   }).join("");
-  const summary = [];
-  for (const p of CAL.pages) {
+  const summary = [], tray = [];
+  if (view !== "all" && !CAL.pages.find((p) => p.id === view)) view = "all";
+  $("tabs").innerHTML = CAL.pages.map((p) => `<button class="${p.id === view ? "on" : ""}" onclick="pickView('${p.id}')">${esc(p.name)} <span class="count">${p.items.filter((i) => i.kind !== "posted").length + p.unplaced.length}</span></button>`).join("")
+    + `<button class="${view === "all" ? "on" : ""}" onclick="pickView('all')">All pages</button>`;
+  for (const p of CAL.pages.filter((x) => view === "all" || x.id === view)) {
     html += `<div class="calpage" style="grid-column: 1 / span ${cols}">${esc(p.name)}</div>`;
     for (const d of CAL.days) {
       const items = p.items.filter((i) => dayOf(i.at) === d);
@@ -55,10 +63,15 @@ function render() {
     }
     const empty = p.emptySlots.length;
     if (empty) summary.push(`<div class="banner ok"><b>${esc(p.name)}</b>: ${empty} posting ${empty === 1 ? "time has" : "times have"} no video yet in the next ${CAL.days.length - 3} days. <a href="/stories.html">Make more</a></div>`);
-    if (p.later) summary.push(`<div class="muted small">${esc(p.name)}: ${p.later} more ${p.later === 1 ? "video waits" : "videos wait"} after these days.</div>`);
+    if (p.unplaced.length) tray.push(`<div class="card" style="padding:14px 18px"><b>${esc(p.name)}: ${p.unplaced.length} ${p.unplaced.length === 1 ? "video has" : "videos have"} no date yet.</b>
+      <span class="muted small">${p.hasTimes ? "The daily times in these days are full." : "This page has no daily times."} Drag each one onto a day, or tap it to pick a date and time.</span>
+      <div class="actions" style="margin-top:10px">${p.unplaced.map((i) => `<div class="calitem auto ${i.warn ? "warn" : ""}" draggable="true" data-id="${i.videoId}" style="max-width:220px" title="${esc(i.title)}">
+        <div class="tt">${esc(i.title)}</div>${i.approval === "pending" ? '<div class="muted">needs approval</div>' : ""}</div>`).join("")}</div></div>`);
+    if (!p.hasTimes && !p.unplaced.length && !p.items.some((i) => i.kind === "fixed") && view === p.id) summary.push(`<div class="banner">Nothing is planned for ${esc(p.name)}. <a href="/upload.html?page=${p.id}">Upload a video</a>, then pick its date here.</div>`);
   }
   g.innerHTML = html;
   $("summary").innerHTML = summary.join("");
+  $("tray").innerHTML = tray.join("");
   wire();
 }
 
@@ -75,22 +88,22 @@ function wire() {
       e.preventDefault(); cell.classList.remove("drop");
       const id = e.dataTransfer.getData("text/plain") || dragId;
       if (!id) return;
-      const item = CAL.pages.flatMap((p) => p.items).find((i) => i.videoId === id);
-      // keep the same time of day, move to the new day
-      const time = item ? new Date(item.at).toLocaleTimeString("en-GB", { timeZone: tz(), hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) : "19:00";
+      const item = allItems().find((i) => i.videoId === id);
+      // keep the same time of day and move to the new day (videos with no time yet go out at 18:00)
+      const time = item && item.at ? new Date(item.at).toLocaleTimeString("en-GB", { timeZone: tz(), hour: "2-digit", minute: "2-digit", hourCycle: "h23" }) : "18:00";
       await schedule(id, `${cell.dataset.day}T${time}`);
     });
   });
 }
 
 function openItem(id) {
-  const item = CAL.pages.flatMap((p) => p.items).find((i) => i.videoId === id);
+  const item = allItems().find((i) => i.videoId === id);
   if (!item) return;
-  const local = new Date(item.at).toLocaleString("sv-SE", { timeZone: tz() }).slice(0, 16).replace(" ", "T");
+  const local = new Date(item.at || Date.now() + 3600e3).toLocaleString("sv-SE", { timeZone: tz() }).slice(0, 16).replace(" ", "T");
   const box = document.createElement("div");
   box.className = "modal";
   box.innerHTML = `<div class="modalbox card"><b>${esc(item.title)}</b>
-    <p class="small muted">${item.kind === "fixed" ? "Fixed time" : "Uses the page's daily times"} · made by ${esc(item.uploader)}</p>
+    <p class="small muted">${item.kind === "fixed" ? "Fixed time" : item.at ? "Uses the page's daily times" : "No date yet"} · made by ${esc(item.uploader)}</p>
     <label>Post at (${esc(tz())})</label><input type="datetime-local" value="${local}">
     <div class="actions" style="margin-top:12px"><button data-a="save">Save time</button>
       ${item.kind === "fixed" ? '<button class="ghost" data-a="auto">Back to daily times</button>' : ""}

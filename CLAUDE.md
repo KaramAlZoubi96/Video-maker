@@ -5,6 +5,7 @@ posts them to YouTube Shorts and Instagram Reels at set times. The owner is not 
 simple English. Do the work end to end and report plainly what changed.
 
 ## How updates go live
+- Live site: Netlify project `karamta7boub` (https://karamta7boub.netlify.app).
 - Hosting: **Netlify**, deployed from this GitHub repo, branch `main`.
 - Netlify runs `npm test` before every deploy (see `netlify.toml`). If tests fail, the live site stays as it was.
 - So: make the change → `npm test` passes → commit → push to `main`. No zips, no manual uploads.
@@ -14,8 +15,9 @@ simple English. Do the work end to end and report plainly what changed.
 - `deploy.bat` / `deploy.command` are a backup for deploying from the owner's PC with the Netlify CLI.
 
 ## The product
-- 2 pages: `p1` "Reddit Stories" and `p2` "Dreamcore". Each page has its own YouTube channel, Instagram
-  account, daily posting times, saved hashtags. Reddit Stories requires story link + author + permission
+- 3 pages: `p1` "Reddit Stories", `p2` "Dreamcore", `p3` "Trade". Each page has its own accounts, daily posting
+  times, saved hashtags. `PageSettings.platforms` limits where a page posts (`pagePlatforms()` in types.mts): Trade is
+  Instagram only, has no daily times, and its videos get a date in the Calendar (or on the Upload page). Reddit Stories requires story link + author + permission
   (credit is added to captions).
 - Queue per page; at each slot the top video is released; "Post now" releases immediately.
 - Views/likes refreshed every 3 h for 30 days; videos finished >35 days ago are archived and their numbers
@@ -23,6 +25,8 @@ simple English. Do the work end to end and report plainly what changed.
 - Approval: with 2+ users and `settings.requireApproval` (default on), finished uploads get `approval: "pending"`;
   slots/fixed times skip videos until `approved` (`canPost()` in queue.mts). "changes" = sent back with a note;
   editing the text puts it back to pending. Videos can be watched via `/api/videos/:id/file` (Range, ≤ one 4 MiB piece per response).
+- Calendar: one tab per page (`?page=p3`) plus "All pages"; waiting videos with no slot are in `unplaced` and shown
+  in a "no date yet" tray to drag onto a day.
 - Fixed times: `video.scheduledAt` (set from Queue 🗓 or the Calendar); `releaseScheduled()` runs each minute; fixed
   videos don't use daily slots. Calendar prediction lives in `netlify/lib/calendar.mts`.
 - Batch: Stories board ticks → `maker.html?batch=id,id` → each story is rendered and uploaded straight to the queue

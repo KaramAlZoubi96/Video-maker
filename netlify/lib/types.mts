@@ -2,10 +2,10 @@ export type Platform = "youtube" | "instagram";
 export const PLATFORMS: Platform[] = ["youtube", "instagram"];
 export const platformName = (p: Platform) => (p === "youtube" ? "YouTube" : "Instagram");
 
-/** The site manages 2 pages. Each page has its own YouTube + Instagram + posting times. */
-export type PageId = "p1" | "p2";
-export const PAGE_IDS: PageId[] = ["p1", "p2"];
-export const isPageId = (x: unknown): x is PageId => x === "p1" || x === "p2";
+/** The site manages 3 pages. Each page has its own accounts and posting times. */
+export type PageId = "p1" | "p2" | "p3";
+export const PAGE_IDS: PageId[] = ["p1", "p2", "p3"];
+export const isPageId = (x: unknown): x is PageId => PAGE_IDS.includes(x as PageId);
 
 export interface Post {
   status: "pending" | "uploading" | "published" | "failed";
@@ -91,6 +91,8 @@ export interface PageSettings {
   hashtags?: string;
   /** Ask for story link + author + permission when uploading (Reddit stories). */
   needsCredit?: boolean;
+  /** Where this page posts. Missing = both YouTube and Instagram. */
+  platforms?: Platform[];
 }
 
 export interface Settings {
@@ -115,6 +117,8 @@ export const DEFAULT_SETTINGS: Settings = {
   pages: {
     p1: { name: "Reddit Stories", slots: ["12:00", "19:00"], hashtags: "#redditstories #reddit #storytime", needsCredit: true },
     p2: { name: "Dreamcore", slots: ["15:00"], hashtags: "#dreamcore #weirdcore #liminalspaces", needsCredit: false },
+    // Trade: Instagram only, no daily times. Each video gets its own date and time in the calendar.
+    p3: { name: "Trade", slots: [], hashtags: "", needsCredit: false, platforms: ["instagram"] },
   },
 };
 
@@ -176,3 +180,9 @@ export interface StepContext {
 }
 
 export type StepResult = { done: true; remoteId: string; url: string | null } | { done: false; note: string };
+
+/** The platforms a page posts to (both, unless the page says otherwise). */
+export const pagePlatforms = (p: PageSettings | undefined): Platform[] => {
+  const list = (p?.platforms ?? []).filter((x) => PLATFORMS.includes(x));
+  return list.length ? list : PLATFORMS;
+};

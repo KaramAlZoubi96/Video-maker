@@ -142,11 +142,11 @@ function renderQueue() {
   tabs((p) => p.queued.length);
   const p = d.pages.find((x) => x.id === current);
   $id("newBtn").href = "/upload.html?page=" + p.id;
-  const acc = [p.accounts.youtube && "YouTube " + p.accounts.youtube, p.accounts.instagram && "Instagram " + p.accounts.instagram].filter(Boolean).join(" · ");
+  const acc = [p.platforms.includes("youtube") && p.accounts.youtube && "YouTube " + p.accounts.youtube, p.platforms.includes("instagram") && p.accounts.instagram && "Instagram " + p.accounts.instagram].filter(Boolean).join(" · ");
   const nextUp = p.queued.find((v) => !v.scheduledAt && v.approval !== "pending" && v.approval !== "changes" && v.status === "ready");
   const next = p.nextSlot
     ? `<div class="next"><b>Next post: ${fmtTime(p.nextSlot, TZ)}</b> <small>· ${nextUp ? `“${esc(nextUp.title)}”` : p.queued.length ? "nothing approved yet" : "nothing waiting"}${acc ? " · " + esc(acc) : ""}</small></div>`
-    : `<div class="next"><b>No posting times for ${esc(p.name)}.</b> <small>Videos only post when you press “Post now”. <a href="/settings.html">Set times</a></small></div>`;
+    : `<div class="next"><b>${esc(p.name)} has no daily times.</b> <small>Give each video a date and time in the <a href="/calendar.html?page=${p.id}">Calendar</a>, or press “Post now”.</small></div>`;
   const upNext = [...p.active.map((v) => row(v, "active", 0, 1)), ...p.queued.map((v, i) => row(v, "queued", i, p.queued.length))];
   $id("page").innerHTML = next
     + list("Unfinished uploads", (p.unfinished || []).map((v) => row(v, "unfinished", 0, 1)), "upload again, or delete")
@@ -175,8 +175,8 @@ function renderInsights() {
   const views = p.totals.youtubeViews + p.totals.instagramViews;
   const kpis = `<div class="kpis">
     <div class="kpi"><span>Views</span><b>${fmtN(views)}</b><small>all posts</small></div>
-    <div class="kpi"><span>YouTube</span><b>${fmtN(p.totals.youtubeViews)}</b><small>views</small></div>
-    <div class="kpi"><span>Instagram</span><b>${fmtN(p.totals.instagramViews)}</b><small>views</small></div>
+    ${p.platforms.includes("youtube") ? `<div class="kpi"><span>YouTube</span><b>${fmtN(p.totals.youtubeViews)}</b><small>views</small></div>` : ""}
+    ${p.platforms.includes("instagram") ? `<div class="kpi"><span>Instagram</span><b>${fmtN(p.totals.instagramViews)}</b><small>views</small></div>` : ""}
     <div class="kpi"><span>Likes</span><b>${fmtN(p.totals.likes)}</b><small>${p.publishedCount} posted · ${fmtN(Math.round(views / p.publishedCount))} views each</small></div>
   </div>`;
   const best = p.bestTimes.length

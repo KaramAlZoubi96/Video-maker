@@ -41,5 +41,5 @@ taps **▶** to watch it, then **✅ Approve** or **✏️ Send back** with a no
 Turn this off in Settings → General if you don't want it.
 
 ## Calendar
-**🗓 Calendar** shows what posts when for both pages (2 or 4 weeks). Drag a video to another day — or tap it — to give
+**🗓 Calendar** shows what posts when, one calendar per page (2 or 4 weeks). Drag a video to another day — or tap it — to give
 it a fixed date and time. Empty posting times are shown, so you know when to make more.

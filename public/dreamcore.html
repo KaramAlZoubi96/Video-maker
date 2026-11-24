@@ -116,7 +116,7 @@ async function addFiles(list) {
 }
 
 async function go() {
-  const platforms = [$("yt").checked && "youtube", $("ig").checked && "instagram"].filter(Boolean);
+  const platforms = [$("yt").checked && "youtube", $("ig").checked && "instagram"].filter((x) => x && PAGE.platforms.includes(x));
   if (!platforms.length) return flash("Choose YouTube and/or Instagram.", true);
   const todo = ITEMS.filter((i) => !i.error && i.state !== "done");
   if (todo.some((i) => !i.title.trim())) return flash("Every video needs a title.", true);
@@ -154,9 +154,11 @@ async function loadInfo() {
   $("h").textContent = PAGE.name;
   document.title = `${PAGE.name} · Shorts HQ`;
   document.querySelectorAll('.nav a[data-nav="dreamcore"] span, .tabbar a[data-nav="dreamcore"] span').forEach((s) => (s.textContent = PAGE.name));
-  $("info").innerHTML = `<b>${PAGE.queued.length} waiting in the queue.</b> <small>· ${PAGE.nextSlot ? "next post " + fmtTime(PAGE.nextSlot, d.data.timezone) : `no posting times yet, <a href="/settings.html">set them in Settings</a>`}</small>`;
+  $("info").innerHTML = `<b>${PAGE.queued.length} waiting in the queue.</b> <small>· ${PAGE.nextSlot ? "next post " + fmtTime(PAGE.nextSlot, d.data.timezone) : `no daily times, pick dates in the <a href="/calendar.html?page=${PAGE.id}">Calendar</a>`}</small>`;
   $("ytName").innerHTML = PAGE.accounts.youtube ? "→ " + esc(PAGE.accounts.youtube) : '<span class="err">(not connected yet)</span>';
   $("igName").innerHTML = PAGE.accounts.instagram ? "→ " + esc(PAGE.accounts.instagram) : '<span class="err">(not connected yet)</span>';
+  $("yt").closest(".check").classList.toggle("hidden", !PAGE.platforms.includes("youtube"));
+  $("ig").closest(".check").classList.toggle("hidden", !PAGE.platforms.includes("instagram"));
   $("tags").innerHTML = PAGE.hashtags ? `Added automatically: <b>${esc(PAGE.hashtags)}</b> <a href="/settings.html">change</a>` : "";
   if (PAGE.needsCredit) flash(`“${PAGE.name}” asks for a story link and permission, so use the Upload page for it.`, true);
   return PAGE;

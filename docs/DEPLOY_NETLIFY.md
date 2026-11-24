@@ -32,7 +32,7 @@ Then **Deploys → Trigger deploy → Deploy project** so they take effect.
 ## 4. First visit
 1. Open your address. The first person to visit creates the first account — **do this right away**.
 2. **Settings → Add a user** → create your friend's login. Send them the link + password.
-3. **Settings → Your 2 pages**: give each page a name and posting times, then connect each page's YouTube and Instagram.
+3. **Settings → Your pages**: give each page a name and posting times, then connect each page's YouTube and Instagram.
 4. **Settings → General** → pick your timezone → Save.
 
 ## How it runs on Netlify

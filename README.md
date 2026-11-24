@@ -7,8 +7,8 @@ A private website for you and your friend: upload a vertical video, and it posts
   random clip from your long background video, auto Part 1/2 for long stories → [docs/MAKE_VIDEOS.md](docs/MAKE_VIDEOS.md)
 - 🎬🎬 **Batch**: tick several stories → one click makes them all and puts them in the queue
 - ✅ **Approve before posting**: a video made by one of you waits until the other watches it and taps Approve (or sends it back with a note)
-- 🗓 **Calendar**: see what posts when for both pages; drag a video to another day or set an exact date and time
-- 📺 **2 pages** (Reddit Stories + Dreamcore): each page has its own YouTube channel, Instagram account and posting times
+- 🗓 **Calendar**: see what posts when , one calendar per page; drag a video to another day or set an exact date and time
+- 📺 **3 pages** (Reddit Stories + Dreamcore + Trade): each page has its own accounts and posting times; Trade is Instagram only and is scheduled from the Calendar
 - 📖 Reddit Stories page asks for the story link, author and permission, and credits the author in the caption
 - #️⃣ Saved hashtags per page, added to every video automatically
 - 📈 Views & likes for every video, totals per page, and which posting time gets the most views
@@ -32,7 +32,7 @@ Backup option without GitHub: double-click **`deploy.bat`** (Windows) or **`depl
 
 ## Daily use
 1. **Upload** → choose the page, the video (MP4/MOV, vertical, 3 s–3 min, up to 150 MB), title, caption with hashtags.
-2. It joins that page's **Queue** (tabs at the top switch between the 2 pages). Reorder with ↑ ↓, edit text, or **Post now**.
+2. It joins that page's **Queue** (tabs at the top switch between the pages). Reorder with ↑ ↓, edit text, or **Post now**.
 3. At each of that page's posting times, its top video goes out. Badges turn green with links to the live posts.
 4. If something fails, the reason is shown with a **Retry** button.
 

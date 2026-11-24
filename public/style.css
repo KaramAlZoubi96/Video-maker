@@ -177,7 +177,7 @@ a.d:hover { text-decoration: none; filter: brightness(1.15); }
 .next small { color: var(--muted); font-size: 14px; }
 
 /* ---- upload page picker ------------------------------------------------ */
-.pick { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pick { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
 .pick label { margin: 0; cursor: pointer; padding: 14px 16px; border-radius: 14px; border: 2px solid var(--line); background: var(--field); font-weight: 500; }
 .pick input { display: none; }
 .pick input:checked + label { border-color: var(--accent); background: var(--accent-soft); }

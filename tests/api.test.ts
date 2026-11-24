@@ -257,6 +257,32 @@ describe("approval, fixed times, calendar", () => {
     expect(cal.days.length).toBe(10);
   });
 
+  it("Trade is an Instagram-only page: scheduled from the calendar, with approval", async () => {
+    const { me, bob } = await twoUsers();
+    await tokens.saveAccount("p3", "instagram", { accessToken: "a", status: "ok" } as any);
+    const d = (await me.call("GET", "/api/dashboard")).json;
+    expect(d.pages.find((p: any) => p.id === "p3")).toMatchObject({ name: "Trade", platforms: ["instagram"], hasTimes: false });
+    // YouTube is dropped even if the browser asks for it
+    const id = await uploadAs(bob, 100, { pageId: "p3", title: "Chart", platforms: ["youtube", "instagram"] });
+    const v = (await q.getVideo(id))!;
+    expect(Object.keys(v.posts)).toEqual(["instagram"]);
+    expect(v.approval).toBe("pending");
+    expect((await bob.call("POST", "/api/videos", { ...meta2, pageId: "p3", size: 100, platforms: ["youtube"] })).status).toBe(400);
+    // no date yet: the calendar lists it as unplaced
+    let p3 = (await me.call("GET", "/api/calendar?days=7")).json.pages.find((p: any) => p.id === "p3");
+    expect(p3.hasTimes).toBe(false);
+    expect(p3.unplaced.map((i: any) => i.videoId)).toEqual([id]);
+    // give it a date; it still waits for approval
+    const at = new Date(Date.now() + 3600e3);
+    expect((await me.call("POST", `/api/videos/${id}/schedule`, { at: at.toISOString() })).status).toBe(200);
+    p3 = (await me.call("GET", "/api/calendar?days=7")).json.pages.find((p: any) => p.id === "p3");
+    expect(p3.unplaced).toEqual([]);
+    expect(p3.items.find((i: any) => i.kind === "fixed")).toMatchObject({ videoId: id });
+    expect(await q.releaseScheduled(new Date(at.getTime() + 1000))).toEqual([]);
+    await me.call("POST", `/api/videos/${id}/approve`, { decision: "approve" });
+    expect(await q.releaseScheduled(new Date(at.getTime() + 1000))).toEqual([id]);
+  });
+
   it("serves the video in small pieces so it can be watched before approving", async () => {
     const me = await loggedIn();
     const id = await uploadAs(me, 100);
@@ -331,7 +357,7 @@ describe("settings & accounts", () => {
     expect((await b.call("POST", "/api/pages/p1", { name: "", slots: "" })).json.error).toMatch(/name/);
     expect((await b.call("POST", "/api/settings", { timezone: "Mars/Base" })).json.error).toMatch(/timezone/);
     const d = (await b.call("GET", "/api/dashboard")).json;
-    expect(d.pages.map((p: any) => p.name)).toEqual(["Reddit Stories", "Cooking"]);
+    expect(d.pages.map((p: any) => p.name)).toEqual(["Reddit Stories", "Cooking", "Trade"]);
   });
 
   it("YouTube connect uses offline access and checks the security state", async () => {

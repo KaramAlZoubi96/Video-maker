@@ -35,8 +35,11 @@
     <div class="check" style="margin-top:12px"><input type="checkbox" id="cPerm"> <label for="cPerm">The author said yes to us using this story</label></div>
   </div>
   <label>Post to</label>
-  <div class="check"><input type="checkbox" id="yt" checked> <label for="yt">YouTube Shorts <span class="muted small" id="ytName"></span></label></div>
-  <div class="check"><input type="checkbox" id="ig" checked> <label for="ig">Instagram Reels <span class="muted small" id="igName"></span></label></div>
+  <div class="check" id="ytRow"><input type="checkbox" id="yt" checked> <label for="yt">YouTube Shorts <span class="muted small" id="ytName"></span></label></div>
+  <div class="check" id="igRow"><input type="checkbox" id="ig" checked> <label for="ig">Instagram Reels <span class="muted small" id="igName"></span></label></div>
+  <label for="when">When should it post? <span class="muted small">(optional)</span></label>
+  <input id="when" type="datetime-local" style="width:100%;max-width:280px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--field);color:var(--text);font:inherit">
+  <div class="muted small" id="whenHint"></div>
   <p><button id="go" class="big" type="submit">Upload & add to queue</button></p>
   <div class="progress" id="pb"><div></div></div>
   <div id="msg" class="small"></div>
@@ -111,7 +114,9 @@ async function sendChunk(id, file, n, chunkSize) {
 $("f").addEventListener("submit", async e => {
   e.preventDefault();
   const file = $("file").files[0];
-  const platforms = [$("yt").checked && "youtube", $("ig").checked && "instagram"].filter(Boolean);
+  const chosenPage = PAGES.find(x => x.id === (document.querySelector("input[name=page]:checked") || {}).value);
+  const posts = chosenPage ? chosenPage.platforms : ["youtube", "instagram"];
+  const platforms = [$("yt").checked && "youtube", $("ig").checked && "instagram"].filter(x => x && posts.includes(x));
   if (!file) return flash("Choose a video file.", true);
   if (!meta) return flash("Wait for the video check to finish (or fix the problem shown under the file).", true);
   if (!platforms.length) return flash("Choose at least one platform.", true);
@@ -153,7 +158,15 @@ $("f").addEventListener("submit", async e => {
       const f = await api(`/api/videos/${id}/complete`, { json: {} });
       if (f.ok) {
         try { localStorage.setItem("page", pageId); } catch (_) {}
-        setMsg("Done! Going to the queue…"); location.href = "/?msg=" + encodeURIComponent("Video added to the queue."); return;
+        let note = "Video added to the queue.", to = "/";
+        if ($("when").value) {
+          const s = await api(`/api/videos/${id}/schedule`, { json: { at: $("when").value } });
+          note = s.ok ? "Video added. It posts at the time you picked (once approved)." : "Video added, but the time was not saved: " + (s.data.error || "") + " Set it in the Calendar.";
+          to = "/calendar.html";
+        } else if (page && !page.hasTimes) {
+          note = "Video added. Now drag it onto a day to choose when it posts."; to = "/calendar.html";
+        }
+        setMsg("Done!"); location.href = `${to}?page=${pageId}&${note.includes("not saved") ? "error" : "msg"}=` + encodeURIComponent(note); return;
       }
       if (f.status !== 409) throw new Error(f.data.error || "Could not finish the upload.");
       for (const n of f.data.missing || []) await sendChunk(id, file, n, chunkSize);
@@ -174,6 +187,11 @@ function showAccounts() {
   $("igName").innerHTML = p.accounts.instagram ? "→ " + esc(p.accounts.instagram) : '<span class="err">(not connected yet)</span>';
   $("autoTags").innerHTML = p.hashtags ? `Added automatically for ${esc(p.name)}: <b>${esc(p.hashtags)}</b> <a href="/settings.html">change</a>` : "";
   $("creditBox").classList.toggle("hidden", !p.needsCredit);
+  $("ytRow").classList.toggle("hidden", !p.platforms.includes("youtube"));
+  $("igRow").classList.toggle("hidden", !p.platforms.includes("instagram"));
+  $("whenHint").textContent = p.hasTimes
+    ? `Leave empty to use ${p.name}'s daily posting times.`
+    : `${p.name} has no daily times, so pick a date and time here, or drag the video onto a day in the Calendar afterwards.`;
 }
 (async () => {
   if (!(await requireUser())) return;

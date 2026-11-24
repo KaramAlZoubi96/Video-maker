@@ -9,7 +9,7 @@ import { buildCalendar } from "./calendar.mts";
 import * as stories from "./stories.mts";
 import * as tokens from "./tokens.mts";
 import {
-  CHUNK_SIZE, DESC_MAX, isPageId, PAGE_IDS, type PageId, MAX_DURATION, MAX_FILE_BYTES, MIN_DURATION, type Platform, PLATFORMS, type Post, PublishError, TITLE_MAX, type Video, platformName,
+  CHUNK_SIZE, DESC_MAX, isPageId, PAGE_IDS, type PageId, MAX_DURATION, MAX_FILE_BYTES, MIN_DURATION, pagePlatforms, type Platform, PLATFORMS, type Post, PublishError, TITLE_MAX, type Video, platformName,
 } from "./types.mts";
 
 type Ctx = { waitUntil?: (p: Promise<unknown>) => void };
@@ -102,12 +102,14 @@ route("GET", "/api/dashboard", async (_req, _m, user) => {
     const next = nextSlotAfter(new Date(), s.pages[id].slots, s.timezone);
     const accounts: Record<string, string | null> = {};
     for (const p of PLATFORMS) accounts[p] = (await tokens.getAccount(id, p))?.displayName ?? null;
-    problems.push(...(await tokens.accountProblems(id, s.pages[id].name)));
+    const plats = pagePlatforms(s.pages[id]);
+    problems.push(...(await tokens.accountProblems(id, s.pages[id].name, plats)));
     const sum = (pl: "youtube" | "instagram", k: "views" | "likes") => done.reduce((n, v) => n + (v.posts[pl]?.stats?.[k] ?? 0), 0);
     const old = await q.getArchivedStats(id);
     pages.push({
       id, name: s.pages[id].name, nextSlot: next?.toISOString() ?? null, accounts, publishedCount: done.length + old.count,
-      hashtags: s.pages[id].hashtags ?? "", needsCredit: Boolean(s.pages[id].needsCredit),
+      hashtags: s.pages[id].hashtags ?? "", needsCredit: Boolean(s.pages[id].needsCredit), platforms: plats,
+      hasTimes: s.pages[id].slots.length > 0,
       totals: { youtubeViews: sum("youtube", "views") + old.youtubeViews, instagramViews: sum("instagram", "views") + old.instagramViews,
         likes: sum("youtube", "likes") + sum("instagram", "likes") + old.likes },
       bestTimes: bestTimes(done, s.timezone, old.byHour), lastStatsRun: s.lastStatsRun ?? null,
@@ -122,7 +124,9 @@ route("GET", "/api/dashboard", async (_req, _m, user) => {
 
 route("POST", "/api/videos", async (req, _m, user) => {
   const b = await body(req);
-  const platforms = PLATFORMS.filter((p) => b.platforms?.includes(p));
+  // Only the platforms this page posts to (Trade is Instagram only).
+  const allowed = isPageId(b.pageId) ? pagePlatforms((await q.getSettings()).pages[b.pageId]) : PLATFORMS;
+  const platforms = allowed.filter((p) => b.platforms?.includes(p));
   const title = String(b.title ?? ""), description = String(b.description ?? "");
   const meta = {
     size: Number(b.size), width: Number(b.width), height: Number(b.height), duration: Number(b.duration),
@@ -301,7 +305,7 @@ route("GET", "/api/settings", async () => {
       accounts[p] = a ? { displayName: a.displayName, status: a.status, error: a.error, tokenExpiresAt: a.tokenExpiresAt } : null;
     }
     pages.push({ id, name: s.pages[id].name, slots: s.pages[id].slots, hashtags: s.pages[id].hashtags ?? "",
-      needsCredit: Boolean(s.pages[id].needsCredit), accounts });
+      needsCredit: Boolean(s.pages[id].needsCredit), platforms: pagePlatforms(s.pages[id]), accounts });
   }
   return json({
     timezone: s.timezone, youtubePrivacy: s.youtubePrivacy, addShortsTag: s.addShortsTag, pages,
@@ -329,7 +333,7 @@ route("POST", "/api/settings", async (req) => {
 });
 
 /** Save one page's name and posting times. */
-route("POST", "/api/pages/(p1|p2)", async (req, m) => {
+route("POST", "/api/pages/(p1|p2|p3)", async (req, m) => {
   const id = m[1] as PageId;
   const b = await body(req);
   const name = String(b.name ?? "").trim();
@@ -344,11 +348,12 @@ route("POST", "/api/pages/(p1|p2)", async (req, m) => {
   if (countTags(hashtags) > 20) return fail("Keep saved hashtags to 20 or fewer (Instagram allows 30 per post in total).");
   await q.updateSettings((s) => {
     const timesChanged = s.pages[id].slots.join() !== slots.join();
-    s.pages[id] = { ...s.pages[id], name, slots, hashtags, needsCredit: Boolean(b.needsCredit) };
+    const platforms = Array.isArray(b.platforms) ? PLATFORMS.filter((p) => b.platforms.includes(p)) : pagePlatforms(s.pages[id]);
+    s.pages[id] = { ...s.pages[id], name, slots, hashtags, needsCredit: Boolean(b.needsCredit), platforms: platforms.length ? platforms : pagePlatforms(s.pages[id]) };
     // New times start counting from now, so a time earlier today doesn't post right away.
     if (timesChanged) s.pages[id].lastSlotRun = new Date().toISOString();
   });
-  return json({ ok: true, message: `"${name}" saved.` + (slots.length ? "" : " No times set: this page only posts with 'Post now'.") });
+  return json({ ok: true, message: `"${name}" saved.` + (slots.length ? "" : " No times set: give each video a date and time in the Calendar, or use 'Post now'.") });
 });
 
 route("POST", "/api/users", async (req) => {
@@ -494,7 +499,7 @@ route("POST", "/api/backgrounds/used", async (req) => {
 });
 
 // ---- accounts -----------------------------------------------------------------
-route("GET", "/api/connect/(p1|p2)/(youtube|instagram)", async (req, m) => {
+route("GET", "/api/connect/(p1|p2|p3)/(youtube|instagram)", async (req, m) => {
   const page = m[1] as PageId, p = m[2] as Platform;
   if (p === "youtube" && !tokens.youtubeConfigured()) return redirect("/settings.html?error=" + encodeURIComponent("Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in Netlify environment variables first."));
   if (p === "instagram" && !tokens.instagramOAuthConfigured()) return redirect("/settings.html?error=" + encodeURIComponent("Add INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET in Netlify, or paste a token instead."));
@@ -525,7 +530,7 @@ route("GET", "/api/connect/(youtube|instagram)/callback", async (req, m) => {
   }
 });
 
-route("POST", "/api/connect/(p1|p2)/instagram/token", async (req, m) => {
+route("POST", "/api/connect/(p1|p2|p3)/instagram/token", async (req, m) => {
   const page = m[1] as PageId;
   const token = String((await body(req)).token ?? "").trim();
   if (!token) return fail("Paste the token first.");
@@ -537,7 +542,7 @@ route("POST", "/api/connect/(p1|p2)/instagram/token", async (req, m) => {
   }
 });
 
-route("POST", "/api/disconnect/(p1|p2)/(youtube|instagram)", async (_req, m) => {
+route("POST", "/api/disconnect/(p1|p2|p3)/(youtube|instagram)", async (_req, m) => {
   await tokens.disconnect(m[1] as PageId, m[2] as Platform);
   return json({ ok: true, message: "Disconnected." });
 });

@@ -25,6 +25,10 @@ export interface CalendarPage {
   emptySlots: string[];
   /** Waiting videos that don't fit in the shown days. */
   later: number;
+  /** Waiting videos with no time yet (no free daily time for them): drag them onto a day. */
+  unplaced: CalendarItem[];
+  /** Does this page have daily posting times at all? */
+  hasTimes: boolean;
 }
 
 export async function buildCalendar(now = new Date(), days = 14): Promise<{ timezone: string; days: string[]; pages: CalendarPage[] }> {
@@ -65,7 +69,8 @@ export async function buildCalendar(now = new Date(), days = 14): Promise<{ time
       items.push({ ...base(v), at: slot.toISOString(), kind: "auto", warn: canPost(v) ? undefined : "Needs approval first" });
     }
     items.sort((a, b) => a.at.localeCompare(b.at));
-    pages.push({ id, name: s.pages[id].name, items, emptySlots, later: Math.max(0, queue.length - qi) });
+    const unplaced = queue.slice(qi).map((v) => ({ ...base(v), at: "", kind: "auto" as const, warn: canPost(v) ? undefined : "Needs approval first" }));
+    pages.push({ id, name: s.pages[id].name, items, emptySlots, later: unplaced.length, unplaced, hasTimes: s.pages[id].slots.length > 0 });
   }
   return { timezone: tz, days: dayList, pages };
 }

@@ -228,9 +228,9 @@ export async function platformReady(page: PageId, p: Platform): Promise<boolean>
 }
 
 /** Problems to show as red banners, e.g. 'Cooking: Instagram is not connected.' */
-export async function accountProblems(page: PageId, pageLabel: string): Promise<string[]> {
+export async function accountProblems(page: PageId, pageLabel: string, platforms: Platform[] = ["youtube", "instagram"]): Promise<string[]> {
   const out: string[] = [];
-  for (const p of ["youtube", "instagram"] as Platform[]) {
+  for (const p of platforms) {
     const acc = await getAccount(page, p);
     if (!acc) out.push(`${pageLabel}: ${platformName(p)} is not connected.`);
     else if (acc.status === "error") out.push(`${pageLabel} · ${platformName(p)}: ${acc.error}`);

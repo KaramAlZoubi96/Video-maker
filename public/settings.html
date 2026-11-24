@@ -12,8 +12,8 @@
 <div class="head"><div><h1>Settings</h1><p class="sub">Pages, accounts, posting times and people.</p></div></div>
 <div id="flash" class="flash hidden"></div>
 
-<h2>Your 2 pages</h2>
-<p class="muted small" style="margin-top:-6px">Each page has its own YouTube channel, Instagram account and posting times.</p>
+<h2>Your pages</h2>
+<p class="muted small" style="margin-top:-6px">Each page has its own accounts and posting times.</p>
 <div class="grid2" id="pages"></div>
 
 <h2>General</h2>
@@ -55,7 +55,7 @@
 
 <h2>For setup</h2>
 <div class="card small">
-  <div class="muted">Redirect URIs (the same for both pages):</div>
+  <div class="muted">Redirect URIs (the same for every page):</div>
   <div>Google Cloud: <code id="ruYt"></code></div>
   <div id="ruIgRow" style="margin-top:6px">Meta (Instagram): <code id="ruIg"></code></div>
 </div>
@@ -95,16 +95,16 @@ function disconnectAccount(btn) {
 
 function pageCard(p, i) {
   return `<div class="card">
-    <div class="pagehead"><span class="badge">Page ${i + 1}</span></div>
+    <div class="pagehead"><span class="badge">Page ${i + 1}</span><span class="badge">Posts to ${p.platforms.map((x) => (x === "youtube" ? "YouTube" : "Instagram")).join(" + ")}</span></div>
     <form onsubmit="event.preventDefault();post('/api/pages/${p.id}',{name:this.n.value,slots:this.s.value,hashtags:this.h.value,needsCredit:this.c.checked}).then(load)">
       <label>Page name</label><input name="n" type="text" maxlength="40" required value="${esc(p.name)}">
       <label>Daily posting times (24h, comma separated)</label><input name="s" type="text" placeholder="12:00, 19:00" value="${esc(p.slots.join(", "))}">
+      <div class="muted small">${p.slots.length ? "The next video in the queue posts at each of these times." : "Empty: nothing posts by itself. Each video gets its own date and time in the Calendar."}</div>
       <label>Saved hashtags (added to every video on this page)</label><input name="h" type="text" placeholder="#dreamcore #weirdcore" value="${esc(p.hashtags)}">
       <div class="check" style="margin-top:12px"><input type="checkbox" name="c" id="nc-${p.id}" ${p.needsCredit ? "checked" : ""}> <label for="nc-${p.id}">Ask for story link, author and permission when uploading</label></div>
       <p><button type="submit">Save page</button></p>
     </form>
-    ${accountRow(p, "youtube", p.accounts.youtube)}
-    ${accountRow(p, "instagram", p.accounts.instagram)}
+    ${p.platforms.map((x) => accountRow(p, x, p.accounts[x])).join("")}
   </div>`;
 }
 
