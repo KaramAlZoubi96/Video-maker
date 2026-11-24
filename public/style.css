@@ -250,3 +250,9 @@ a.d:hover { text-decoration: none; filter: brightness(1.15); }
 .calitem.posting { border-left-color: var(--accent); cursor: default; }
 .calitem.warn { border-left-color: var(--warn); }
 .calslot { border: 1px dashed var(--line); border-radius: 8px; padding: 6px; font-size: 12px; color: var(--faint); text-align: center; }
+
+/* Drop zone on the Upload page */
+.dropzone { border: 1.5px dashed var(--line); border-radius: var(--radius); padding: 30px 16px; text-align: center; cursor: pointer; color: var(--muted); transition: border-color .15s, background .15s; }
+.dropzone b { display: block; color: var(--text); font-size: 16px; margin-bottom: 4px; word-break: break-all; }
+.dropzone:hover, .dropzone:focus-visible, .dropzone.over { border-color: var(--accent); background: rgba(41,151,255,.08); outline: none; }
+.dropzone.has { border-style: solid; }

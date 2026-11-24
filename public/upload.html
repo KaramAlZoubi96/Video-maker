@@ -16,7 +16,8 @@
   <label style="margin-top:0">Which page is this video for?</label>
   <div class="pick" id="pages"></div>
   <label for="file">Video file — MP4 or MOV, vertical, 3–180 seconds, up to 150 MB</label>
-  <input id="file" type="file" accept="video/mp4,video/quicktime,.mp4,.mov,.m4v" required>
+  <input id="file" type="file" accept="video/mp4,video/quicktime,.mp4,.mov,.m4v" class="hidden">
+  <div class="dropzone" id="drop" role="button" tabindex="0"><b id="dropName">Drag your video here</b><span>or click to choose a file</span></div>
   <div id="info" class="muted small"></div>
   <label for="title">Title (YouTube)</label>
   <input id="title" type="text" maxlength="100" required placeholder="Short catchy title">
@@ -87,10 +88,34 @@ function check(file, m) {
   return null;
 }
 
+// Drag and drop: drop the video anywhere on the page, or click the box.
+const zone = $("drop");
+zone.addEventListener("click", () => $("file").click());
+zone.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("file").click(); } });
+let dragDepth = 0;
+document.addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; zone.classList.add("over"); });
+document.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; zone.classList.remove("over"); } });
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", (e) => {
+  e.preventDefault(); dragDepth = 0; zone.classList.remove("over");
+  const files = e.dataTransfer?.files;
+  if (!files?.length) return;
+  if (files.length > 1) flash("One video at a time here. I took the first one.", true);
+  const dt = new DataTransfer(); dt.items.add(files[0]);
+  $("file").files = dt.files;
+  $("file").dispatchEvent(new Event("change"));
+});
+
 $("file").addEventListener("change", async () => {
   meta = null; $("info").textContent = "";
   const file = $("file").files[0];
+  $("dropName").textContent = file ? file.name : "Drag your video here";
+  zone.classList.toggle("has", !!file);
   if (!file) return;
+  if (!$("title").value.trim()) { // title from the file name: "gold_breakout-01.mp4" -> "Gold breakout 01"
+    const t = file.name.replace(/\.[^.]+$/, "").replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 100);
+    if (t) { $("title").value = t[0].toUpperCase() + t.slice(1); $("title").dispatchEvent(new Event("input")); }
+  }
   $("info").textContent = "Checking video…";
   try {
     const m = await readVideo(file);
